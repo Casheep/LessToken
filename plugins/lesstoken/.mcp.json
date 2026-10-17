@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lesstoken": {
+      "command": "${PLUGIN_ROOT}/bin/lesstoken.exe",
+      "args": ["mcp"]
+    }
+  }
+}

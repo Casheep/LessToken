@@ -1,0 +1,13 @@
+{
+  "name": "lesstoken",
+  "version": "0.2.0-beta.6",
+  "description": "Local recoverable log/test folding, bounded file reading and automatic shell-output optimization. Windows; ChatGPT subscription sign-in.",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "LessToken",
+    "shortDescription": "Local output optimization",
+    "category": "Coding"
+  }
+}
