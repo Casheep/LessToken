@@ -35,7 +35,7 @@ DEVELOPMENT = (
     "tests/hooks.py", "tests/publication.py", "docs/optimization.md",
     "docs/optimization-benchmark.json", "docs/e2e-round-01.json",
     "docs/e2e-round-02.json", "docs/e2e-native-validation.json",
-    "docs/e2e-validation.md", "docs/github-readiness.md",
+    "docs/github-readiness.md",
 )
 SOURCE = tuple(sorted(CORE + DEVELOPMENT))
 MANIFEST = "PUBLICATION_MANIFEST.json"
