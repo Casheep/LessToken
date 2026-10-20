@@ -21,7 +21,7 @@ if ($DataDirectory) {
     $dataPath = [System.IO.Path]::GetFullPath($DataDirectory)
     $runtimeEnv['LESSTOKEN_DATA'] = $dataPath
 }
-$runtimeEnv['LESSTOKEN_REUSE_SNAPSHOTS'] = if ($ReuseSnapshots) { '1' } else { '0' }
+$runtimeEnv['LESSTOKEN_REUSE_SNAPSHOTS'] = if ($WithoutHooks) { '0' } else { '1' }
 $runtimeEnv['LESSTOKEN_CONTEXT_ARCHIVE'] = if ($ArchiveContext) { '1' } else { '0' }
 $mcp.mcpServers.lesstoken | Add-Member -NotePropertyName env -NotePropertyValue $runtimeEnv -Force
 [System.IO.File]::WriteAllText($mcpPath, ($mcp | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))

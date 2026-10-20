@@ -3,7 +3,7 @@
     "lesstoken": {
       "command": "${PLUGIN_ROOT}/bin/lesstoken.exe",
       "args": ["mcp"],
-      "env": {"LESSTOKEN_REUSE_SNAPSHOTS": "0", "LESSTOKEN_CONTEXT_ARCHIVE": "0"}
+      "env": {"LESSTOKEN_REUSE_SNAPSHOTS": "1", "LESSTOKEN_CONTEXT_ARCHIVE": "0"}
     }
   }
 }

@@ -51,7 +51,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Codex
 
 默认安装 MCP、Skill 和待审核的 Hooks。仅安装 MCP/Skill 可加 -WithoutHooks；自定义数据目录可加 -DataDirectory。文件批处理写操作仅在用户明确需要时加 -EnableFileWrites，首次试用无需开启。
 
-长聊天功能默认关闭：安装时加 `-ReuseSnapshots` 可复用当前历史中已完整附加且内容未变的文件快照，真实模型对照中总 token 用量相比旧版减少约 36.3%，本组任务未发现回答质量下降。实验参数 `-ArchiveContext` 可在宿主压缩历史时保存可检索的可见记录，尚未通过真实模型对照，建议保持关闭。这两个参数需要 Hooks，沿用当前模型和宿主的正常压缩流程。重新安装时省略这两个参数即可关闭。数据读取和保留方式见 [PRIVACY.md](PRIVACY.md)。
+默认自动复用当前历史中已完整附加且内容未变的文件快照，无需额外安装参数。真实模型对照中总 token 用量相比旧版减少约 36.3%，本组任务未发现回答质量下降；文件变化或原文不可用时仍完整读取。此功能需要 Hooks，沿用当前模型和宿主的正常压缩流程。实验参数 `-ArchiveContext` 用于保存可检索的压缩前可见历史，尚未通过真实模型对照，默认关闭。数据读取和保留方式见 [PRIVACY.md](PRIVACY.md)。
 
 ## 安装后
 

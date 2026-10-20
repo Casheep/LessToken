@@ -13,7 +13,7 @@ namespace {
 bool snapshot_in_active_tail(const json& event,const json& snapshot,const std::string& header,std::string& prior_ref) {
   prior_ref.clear();
   const char* opt=std::getenv("LESSTOKEN_REUSE_SNAPSHOTS");
-  if(!opt || std::string(opt)!="1") return false;
+  if(opt && std::string(opt)!="1") return false;
   try {
     auto session=event.at("session_id").get<std::string>();
     if(session.empty() || session.size()>100) return false;
