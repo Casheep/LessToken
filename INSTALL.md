@@ -58,6 +58,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Codex
 
 首次可发送“检查 LessToken 是否连接成功，确认项目根目录正确、file_writes_enabled=false”。之后正常使用即可，不必每次查询统计。MCP 由模型按任务选择，Hooks 自动处理支持的命令；并非所有操作都经过插件。
 
+新版提示词钩子还会为明确点名文件的查看/修复请求提前准备完整证据，仅处理有限的请求形式和预算内的普通文件。无法安全、完整提供时仍走原来的工具流程。`LESSTOKEN_PREFETCH=0` 可关闭提前读取。钩子定义变化后仍需按 Codex 提示重新审核信任，安装脚本不代为信任。
+
 保留解压目录，MCP 使用其中程序的绝对路径。移动目录后需从新位置重新运行安装脚本。升级时使用新版发布包执行同样步骤。
 
 ## 卸载

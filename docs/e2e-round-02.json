@@ -1,0 +1,137 @@
+{
+  "model": "gpt-6.1-sol",
+  "effort": "medium",
+  "source_commit": "a57b5fdf89a6d4067b1ff64d946ce6eb02b307b0",
+  "binary_sha256": {
+    "baseline": "37de489a2d9d8ea397105583fffc790c43870cb73bf475475401abda9ad6c4c3",
+    "candidate": "581d5e2c8a83ce3bbd0e5bf83ebcbf38c28a10dbd92393d456a5d33fdc39305d"
+  },
+  "fixture_sha256": {
+    "core.cpp": "3bf5bfc7489c4059da0ea7a3b147ac970159d1ebdeafa37d2443814f511d8ab0",
+    "diagnostics.log": "408bb0858459d30afc356bb1a4ae2091c720b47377cf4cac27fa29eeee15aed0",
+    "rows.json": "bfa6a47ce6166b24ad78d25367e7cc1d0b0df9e47f34b3f8305047b29ac1819b",
+    "worker.log": "275656c338bf9c2404d0715701fe583dd3ed510782eaeae2a47b32c3cea8d7f8"
+  },
+  "summary": {
+    "conclusive": true,
+    "goal_verified": false,
+    "total_tokens": {
+      "baseline": 200338,
+      "candidate": 150681
+    },
+    "reduction_percent": 24.79,
+    "passed": {
+      "baseline": 4,
+      "candidate": 4
+    },
+    "regressions": [],
+    "pilot_gate_passed": false,
+    "scope": "Declared pilot tasks only. Baseline is previous plugin. Broader quality, plugin-off usage and installed-host validation remain required."
+  },
+  "cases": [
+    {
+      "valid": true,
+      "passed": true,
+      "usage": {
+        "input_tokens": 64720,
+        "cached_input_tokens": 54400,
+        "output_tokens": 269,
+        "reasoning_output_tokens": 33,
+        "total_tokens": 64989
+      },
+      "case": "log-diagnosis",
+      "arm": "baseline"
+    },
+    {
+      "valid": true,
+      "passed": true,
+      "usage": {
+        "input_tokens": 37104,
+        "cached_input_tokens": 32512,
+        "output_tokens": 207,
+        "reasoning_output_tokens": 48,
+        "total_tokens": 37311
+      },
+      "case": "log-diagnosis",
+      "arm": "candidate"
+    },
+    {
+      "valid": true,
+      "passed": true,
+      "usage": {
+        "input_tokens": 36700,
+        "cached_input_tokens": 26880,
+        "output_tokens": 145,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 36845
+      },
+      "case": "diagnostic-retention",
+      "arm": "candidate"
+    },
+    {
+      "valid": true,
+      "passed": true,
+      "usage": {
+        "input_tokens": 35593,
+        "cached_input_tokens": 31744,
+        "output_tokens": 118,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 35711
+      },
+      "case": "diagnostic-retention",
+      "arm": "baseline"
+    },
+    {
+      "valid": true,
+      "passed": true,
+      "usage": {
+        "input_tokens": 49575,
+        "cached_input_tokens": 40704,
+        "output_tokens": 169,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 49744
+      },
+      "case": "source-understanding",
+      "arm": "baseline"
+    },
+    {
+      "valid": true,
+      "passed": true,
+      "usage": {
+        "input_tokens": 39248,
+        "cached_input_tokens": 19456,
+        "output_tokens": 160,
+        "reasoning_output_tokens": 15,
+        "total_tokens": 39408
+      },
+      "case": "source-understanding",
+      "arm": "candidate"
+    },
+    {
+      "valid": true,
+      "passed": true,
+      "usage": {
+        "input_tokens": 36998,
+        "cached_input_tokens": 32512,
+        "output_tokens": 119,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 37117
+      },
+      "case": "data-query",
+      "arm": "candidate"
+    },
+    {
+      "valid": true,
+      "passed": true,
+      "usage": {
+        "input_tokens": 49743,
+        "cached_input_tokens": 43392,
+        "output_tokens": 151,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 49894
+      },
+      "case": "data-query",
+      "arm": "baseline"
+    }
+  ]
+}

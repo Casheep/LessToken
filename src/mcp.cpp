@@ -13,6 +13,10 @@ static json schema(json properties, json required = json::array()) {
 static json integer(size_t value, size_t max) {
   return {{"type", "integer"}, {"minimum", 1}, {"maximum", max}, {"default", value}};
 }
+static json preview_integer(size_t value,size_t maximum,size_t minimum=1) {
+  return {{"type","integer"},{"minimum",minimum},{"default",value},
+    {"description","Preview caps at "+std::to_string(maximum)+"; larger requests return explicit cap metadata. Check completeness/pagination."}};
+}
 static json tools(bool allow_write) {
   auto text = json{{"type", "string"}};
   auto read_schema=schema({{"path",text},{"files",{{"type","array"},{"items",text},{"minItems",1},{"maxItems",16}}},
@@ -21,13 +25,15 @@ static json tools(bool allow_write) {
     {"offset",{{"type","integer"},{"minimum",0}}},{"bytes",integer(12000,16000)}});
   read_schema["oneOf"]=json::array({{{"required",{"path"}}},{{"required",{"files"}}}});
   auto list=json::array({
-    {{"name", "lt_read"}, {"description", "Read project text: path or files[1..16]. Batch defaults to 20 lines/file; next_file continues a bounded batch. Log/test folding preserves local originals. Code is exact within requested slices; clipped selected views have refs."},
+    {{"name", "lt_read"}, {"description", "Read project text: path or files[1..16]. Batch defaults to 20 lines/file; next_file continues a bounded batch. lossless=true views represent all content; original retrieval is optional. Code slices are exact; clipped views have refs."},
       {"inputSchema", read_schema},
       {"annotations", {{"readOnlyHint", true}, {"openWorldHint", false}}}},
-    {{"name", "lt_search"}, {"description", "Literal project search. Prefer mode=files/count/summary when matched text is unnecessary. content merges overlapping context; line/lines identify matched source lines. limit counts hits, not groups. glob supports include/!exclude patterns. complete/scan_complete report limits."},
-      {"inputSchema", schema({{"query", text}, {"path", text}, {"limit", integer(10, 100)},
+    {{"name", "lt_search"}, {"description", "Literal project search. Set before/after (0..40) to get needed source windows in one call; overlaps merge. Prefer mode=files/count/summary when text is unnecessary. line/lines identify hits; limit counts hits, not groups. glob supports include/!exclude. Check complete/scan_complete and clipped."},
+      {"inputSchema", schema({{"query", text}, {"path", text}, {"limit", preview_integer(10, 100)},
         {"mode",{{"type","string"},{"enum",{"content","files","count","summary"}},{"default","content"}}},
-        {"glob",{{"type","array"},{"items",text},{"maxItems",32}}}}, {"query"})},
+        {"glob",{{"type","array"},{"items",text},{"maxItems",32}}},
+        {"before",preview_integer(1,40,0)},
+        {"after",preview_integer(2,40,0)}}, {"query"})},
       {"annotations", {{"readOnlyHint", true}, {"openWorldHint", false}}}},
     {{"name", "lt_result"}, {"description", "Raw refs: query, start/count or byte offset/bytes. Tables: put exactly one of path (project JSON-array file), items or source_ref; include equals/fields to receive the selected page immediately. Prefer path over read then put when the file and filters are known. Page refs with unchanged equals/fields; offsets follow filtered rows. release deletes tables only. j- refs page batch audits. Tables expire in 24h and are project-scoped."},
       {"inputSchema", schema({{"ref", text}, {"query", text}, {"start", integer(1, 10000000)}, {"count", integer(100, 500)},
@@ -35,7 +41,7 @@ static json tools(bool allow_write) {
         {"action",{{"type","string"},{"enum",{"put","page","release"}}}},
         {"items",{{"type","array"},{"items",{{"type","object"}}},{"maxItems",10000}}},{"source_ref",text},{"path",text},
         {"equals",{{"type","object"}}},{"fields",{{"type","array"},{"items",text},{"maxItems",32}}},
-        {"limit",integer(100,512)},{"max_bytes",{{"type","integer"},{"minimum",512},{"maximum",16000}}}})},
+        {"limit",preview_integer(100,512)},{"max_bytes",{{"type","integer"},{"minimum",512},{"maximum",16000}}}})},
       {"annotations", {{"readOnlyHint", false}, {"destructiveHint",false},{"openWorldHint", false}}}},
     {{"name","lt_batch"},{"description","Regular-file copy/move/remove only, project-relative / paths. plan requires 1..128 independent operations; resume executes that exact ref, never redoing completed/failed/unknown items. No overwrites, directories, links, or Git metadata. run/resume require server --allow-write. Page item states via lt_result. Use only for user-authorized file changes."},
       {"inputSchema",schema({{"action",{{"type","string"},{"enum",{"plan","run","resume"}}}},{"ref",text},
