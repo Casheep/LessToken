@@ -1,6 +1,6 @@
 {
   "name": "lesstoken",
-  "version": "0.2.0-beta.9",
+  "version": "0.2.0-beta.10",
   "description": "Local recoverable log/test folding, bounded file queries and explicit-file prompt snapshots for Codex on Windows.",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
@@ -8,6 +8,8 @@
   "interface": {
     "displayName": "LessToken",
     "shortDescription": "Local output optimization",
-    "category": "Coding"
+    "category": "Coding",
+    "composerIcon": "./skills/lesstoken/assets/icon.svg",
+    "logo": "./skills/lesstoken/assets/icon.svg"
   }
 }

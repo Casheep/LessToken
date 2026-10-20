@@ -1,0 +1,5 @@
+interface:
+  display_name: "LessToken"
+  short_description: "Read and search project files with less context"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
