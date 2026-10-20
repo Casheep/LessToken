@@ -19,7 +19,7 @@
 用户要求安装本插件时，按顺序执行：
 
 1. 以本文件所在目录为发布包根目录，检查 VERSION、安装脚本和 `plugins/lesstoken/bin/lesstoken.exe` 存在。不使用临时解压目录作为长期安装位置。
-2. 执行 `powershell -NoProfile -ExecutionPolicy Bypass -File "发布包完整路径\scripts\verify.ps1"`。必须确认退出码为 0 且输出 PASS；这只是本地自检，不调用模型、不改变正常 Codex 配置。
+2. 执行 `& "发布包完整路径\plugins\lesstoken\bin\lesstoken.exe" --version`，确认退出码为 0 且版本与 VERSION 文件一致。
 3. 执行 `powershell -NoProfile -ExecutionPolicy Bypass -File "发布包完整路径\scripts\install.ps1"`，确认退出码为 0。安装器自动定位 Codex，支持普通命令行环境；特殊路径使用 -CodexPath，不修改系统 PATH。默认不加 -EnableFileWrites。
 4. 检查安装输出中的实际插件目录，确认版本和 MCP 可执行文件存在、未设置 --allow-write。不要输出凭据或重写其他插件配置，不修改 AGENTS.md。
 5. 告知用户安装结果、必须保留的目录，以及在实际项目中新开聊天。当前聊天尚未加载新工具时，不反复调用不存在的工具。在工具已加载的聊天中，可调用一次 lt_stats 确认项目目录及 file_writes_enabled=false，再做一次小范围读取验证。
@@ -29,14 +29,13 @@
 
 ## 方式二：普通命令行安装
 
-在解压目录中打开 PowerShell、Windows Terminal 或命令提示符，依次运行：
+在解压目录中打开 PowerShell、Windows Terminal 或命令提示符，运行：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
-第一条应显示 PASS，第二条应显示 Installed。无需让 Codex 执行这些命令。
+完成后应显示 Installed。无需让 Codex 执行此命令。
 
 也可以在任意目录使用完整路径。以下示例需替换为实际解压目录：
 

@@ -25,3 +25,13 @@ research/lesstoken-mcp.json
 research/plugin-load-results.json
 research/hook-results.json
 
+# Local development and validation material is never part of public submissions.
+/tests/
+/docs/
+/.github/workflows/
+/CHANGELOG.md
+/DEVELOPMENT.md
+/PUBLICATION_MANIFEST.json
+/scripts/*.py
+/scripts/verify.ps1
+

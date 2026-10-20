@@ -23,7 +23,6 @@
 下载 [Windows x64 安装包](https://github.com/Casheep/LessToken/releases/download/v0.2.0-beta.6/LessToken-0.2.0-beta.6-windows-x64.zip)，解压到一个长期保留的目录，在该目录打开 PowerShell：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 

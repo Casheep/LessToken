@@ -8,6 +8,6 @@ Selected dsh-ops native-core behaviours have been ported to C++20 for 0.2.0-beta
 Source: https://github.com/nlohmann/json/tree/v3.12.0
 SHA-256 of the vendored header: `aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63`.
 
-Research checkouts, dependency environments, third-party release binaries and raw model transcripts are excluded from public packages. The source package includes tests and sanitized evaluation reports; the runtime package omits development scripts. The selected dsh-ops source snapshot is recorded in its NOTICE.md above.
+Research checkouts, dependency environments, third-party release binaries, raw model transcripts, tests, evaluation and packaging scripts, and development reports are excluded from public packages. The selected dsh-ops source snapshot is recorded in its NOTICE.md above.
 
 The packaged executable also includes the compiler's C/C++ runtime components under their upstream runtime-library licenses and exceptions. The local MinGW release package includes the available GCC runtime exception, headers and winpthreads license notices in `licenses/`, plus nlohmann/json's MIT notice. No upstream tools are bundled. A license for the original LessToken project itself has not yet been selected by its owner; the bundled third-party MIT texts do not license the original project.

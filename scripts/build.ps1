@@ -23,4 +23,4 @@ try {
 } finally { $env:PATH = $oldPath }
 New-Item -ItemType Directory -Force "$workspace/plugins/lesstoken/bin" | Out-Null
 Copy-Item -LiteralPath "$workspace/build/lesstoken.exe" -Destination "$workspace/plugins/lesstoken/bin/lesstoken.exe" -Force
-Write-Output 'Build complete. The executable is ready for scripts/verify.ps1 and scripts/install.ps1.'
+Write-Output 'Build complete. The executable is ready for scripts/install.ps1.'
