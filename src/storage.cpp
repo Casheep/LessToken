@@ -224,6 +224,6 @@ std::string file_view(const fs::path& path, const std::string& kind, Store& stor
 }
 json Store::page(const std::string& id, size_t offset, size_t bytes) {
   if (!result_name(id)) throw std::runtime_error("Invalid result reference.");
-  return byte_page(confined(root / "results", root / "results" / (id + ".txt")), offset, bytes);
+  return byte_page(result_path(root,id), offset, bytes);
 }
 }

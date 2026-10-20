@@ -1,5 +1,11 @@
 {
   "hooks": {
+    "PreCompact": [
+      {"hooks": [{"type": "command", "command": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${PLUGIN_ROOT}/hooks/invoke.ps1\" context", "timeout": 20}]}
+    ],
+    "SessionStart": [
+      {"matcher": "^compact$", "hooks": [{"type": "command", "command": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${PLUGIN_ROOT}/hooks/invoke.ps1\" context", "timeout": 20, "additionalContextLimit": 1000}]}
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

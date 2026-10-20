@@ -2,7 +2,7 @@
 
 为 Codex 减少重复输出和不必要的工具往返的本地插件。核心使用 C++20，支持 Windows x64 的 Codex 桌面端和 CLI。
 
-当前版本：**0.2.0-beta.6**。
+当前版本：**0.2.0-beta.8**。
 
 ## 能做什么
 
@@ -11,8 +11,11 @@
 - 在本地直接筛选 JSON 数组，只向模型返回所需记录和字段。
 - 按需读取、搜索和分页查询大文件。
 - 对明确点名的小文件检查，提前在本地准备完整证据，减少模型取文件的往返。
+- 可选实验功能：复用已核对且仍在上下文中的相同文件内容，并为聊天压缩前的历史提供原文补查；默认关闭。
 
 综合测试的总 token 用量相比关闭插件减少约 **44%**。
+
+长聊天测试中，开启文件复用后，总 token 用量相比旧版减少约 **36.3%**。
 
 安装后，Hooks 自动处理支持的命令，Codex 也可按任务选择 MCP 工具。无需每次手动提醒，但并非所有操作都会经过插件。
 
@@ -20,7 +23,7 @@
 
 ### 普通命令行
 
-下载 [Windows x64 安装包](https://github.com/Casheep/LessToken/releases/download/v0.2.0-beta.6/LessToken-0.2.0-beta.6-windows-x64.zip)，解压到一个长期保留的目录，在该目录打开 PowerShell：
+下载 [Windows x64 安装包](https://github.com/Casheep/LessToken/releases/download/v0.2.0-beta.8/LessToken-0.2.0-beta.8-windows-x64.zip)，解压到一个长期保留的目录，在该目录打开 PowerShell：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1

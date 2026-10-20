@@ -199,9 +199,10 @@ Store::Store(fs::path path) : root(fs::absolute(std::move(path))) {
   fs::create_directories(root / "results");
   fs::create_directories(root / "events");
 }
-static fs::path ref_path(const fs::path& root, const std::string& id) {
+fs::path result_path(const fs::path& root, const std::string& id) {
   if (id.size() != 32 || !std::all_of(id.begin(), id.end(), [](unsigned char c) { return std::isdigit(c) || (c >= 'a' && c <= 'f'); }))
     throw std::runtime_error("Invalid result reference.");
+  restore_context_archive(root,id);
   return confined(root / "results", root / "results" / (id + ".txt"));
 }
 std::string Store::save(const std::string& raw, const json& metadata) {
@@ -213,7 +214,7 @@ std::string Store::save(const std::string& raw, const json& metadata) {
 }
 std::string Store::fetch(const std::string& id, size_t start, size_t count) {
   if (!start || count > 500 || !count) throw std::runtime_error("Use start >= 1 and 1 <= count <= 500.");
-  std::ifstream f(ref_path(root, id), std::ios::binary);
+  std::ifstream f(result_path(root, id), std::ios::binary);
   std::ostringstream out;
   size_t current = 1, shown = 0, line_bytes = 0; std::string line; char c;
   while (f.get(c)) {
@@ -231,7 +232,7 @@ std::string Store::fetch(const std::string& id, size_t start, size_t count) {
 }
 json Store::search(const std::string& id, const std::string& query, size_t context, size_t limit) {
   if (query.empty() || query.size() > 1024 || context > 10 || limit < 1 || limit > 50) throw std::runtime_error("Invalid bounded search arguments.");
-  auto result = search_file(ref_path(root, id), query, limit);
+  auto result = search_file(result_path(root, id), query, limit);
   result["ref"] = id;
   return result;
 }

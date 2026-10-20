@@ -1,5 +1,6 @@
-param([switch]$WithoutHooks, [switch]$EnableFileWrites, [string]$DataDirectory = '', [string]$CodexPath = '')
+param([switch]$WithoutHooks, [switch]$EnableFileWrites, [switch]$ReuseSnapshots, [switch]$ArchiveContext, [string]$DataDirectory = '', [string]$CodexPath = '')
 $ErrorActionPreference = 'Stop'
+if ($WithoutHooks -and ($ReuseSnapshots -or $ArchiveContext)) { throw 'ReuseSnapshots and ArchiveContext require Hooks.' }
 $sourceRoot = Split-Path -Parent $PSScriptRoot
 $binary = Join-Path $sourceRoot 'plugins/lesstoken/bin/lesstoken.exe'
 if (-not (Test-Path -LiteralPath $binary)) { throw 'Run this script from the extracted Windows release package.' }
@@ -12,10 +13,17 @@ $mcp = Get-Content -LiteralPath $mcpPath -Raw | ConvertFrom-Json
 $mcp.mcpServers.lesstoken.command = (Resolve-Path -LiteralPath $binary).ProviderPath
 $mcp.mcpServers.lesstoken.args = @('mcp')
 if ($EnableFileWrites) { $mcp.mcpServers.lesstoken.args += '--allow-write' }
+$runtimeEnv = @{}
+if ($mcp.mcpServers.lesstoken.env) {
+    foreach ($property in $mcp.mcpServers.lesstoken.env.PSObject.Properties) { $runtimeEnv[$property.Name] = $property.Value }
+}
 if ($DataDirectory) {
     $dataPath = [System.IO.Path]::GetFullPath($DataDirectory)
-    $mcp.mcpServers.lesstoken | Add-Member -NotePropertyName env -NotePropertyValue @{ LESSTOKEN_DATA = $dataPath } -Force
+    $runtimeEnv['LESSTOKEN_DATA'] = $dataPath
 }
+$runtimeEnv['LESSTOKEN_REUSE_SNAPSHOTS'] = if ($ReuseSnapshots) { '1' } else { '0' }
+$runtimeEnv['LESSTOKEN_CONTEXT_ARCHIVE'] = if ($ArchiveContext) { '1' } else { '0' }
+$mcp.mcpServers.lesstoken | Add-Member -NotePropertyName env -NotePropertyValue $runtimeEnv -Force
 [System.IO.File]::WriteAllText($mcpPath, ($mcp | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
 # Keep the extracted marketplace at a stable path; Codex caches the plugin on install.
 # This script adds one named source and plugin via Codex's own commands. It does not

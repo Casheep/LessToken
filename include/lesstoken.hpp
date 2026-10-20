@@ -66,6 +66,9 @@ int mcp_main(const fs::path& root, bool allow_write = false);
 json hook(const json& event, bool explicit_opt_in = false);
 json post_hook(const json& event);
 json prompt_hook(const json& event);
+json context_hook(const json& event);
+bool restore_context_archive(const fs::path& store_root, const std::string& ref);
+fs::path result_path(const fs::path& store_root, const std::string& ref);
 json doctor();
 int main_impl(const std::vector<std::string>& argv);
 }

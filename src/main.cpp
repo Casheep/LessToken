@@ -26,7 +26,7 @@ int main_impl(const std::vector<std::string>& argv) {
       "  run --kind log|test|json|raw [--timeout-ms N] -- EXECUTABLE ARG...\n"
       "  fetch REF [START=1] [COUNT=100]\n  search REF QUERY\n"
       "  page REF [OFFSET=0] [BYTES=12000]\n  prune [MAX_MIB=512] [DAYS=7]\n"
-      "  mcp [--root PROJECT] [--allow-write]\n  ops [--root PROJECT] [--allow-write] < request.json\n  hook [--prompt|--rewrite-readonly|--post]\n  stats\n  doctor\n";
+      "  mcp [--root PROJECT] [--allow-write]\n  ops [--root PROJECT] [--allow-write] < request.json\n  hook [--prompt|--rewrite-readonly|--post|--context]\n  stats\n  doctor\n";
     return 0;
   }
   if (argv[0] == "--version") { std::cout << version << '\n'; return 0; }
@@ -36,6 +36,7 @@ int main_impl(const std::vector<std::string>& argv) {
     try {
       auto event = json::parse(stdin_text());
       auto output = argv.size() == 2 && argv[1] == "--prompt" ? prompt_hook(event)
+        : argv.size() == 2 && argv[1] == "--context" ? context_hook(event)
         : argv.size() == 2 && argv[1] == "--post" ? post_hook(event)
         : hook(event, argv.size() == 2 && argv[1] == "--rewrite-readonly");
       if (!output.empty()) std::cout << output.dump() << '\n';
