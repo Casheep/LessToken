@@ -2,6 +2,7 @@
 #include "lesstoken.hpp"
 #include <algorithm>
 #include <array>
+#include <deque>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -83,8 +84,20 @@ json project_query(const fs::path& root, const json& args) {
   if(mode!="content" && mode!="files" && mode!="count" && mode!="summary") throw ToolError("INVALID_ARGUMENT", "mode: content, files, count or summary");
   auto query=args.at("query").get<std::string>();
   if(query.empty() || query.size()>1024 || query.find('\0')!=std::string::npos) throw ToolError("INVALID_ARGUMENT", "Use a literal query of 1..1024 bytes");
-  auto limit=args.value("limit", 10);
-  if(limit<1 || limit>100) throw ToolError("INVALID_ARGUMENT", "limit: 1..100");
+  auto requested_limit=args.value("limit",json(10));
+  if((!requested_limit.is_number_integer() && !requested_limit.is_number_unsigned()) || requested_limit<1)
+    throw ToolError("INVALID_ARGUMENT", "limit: positive integer; previews cap at 100 hits");
+  auto limit=requested_limit>100?100:requested_limit.get<int>();
+  auto window=[&](const char* key,int fallback) {
+    if(!args.contains(key)) return fallback;
+    const auto& value=args[key];
+    if((!value.is_number_integer() && !value.is_number_unsigned()) || value<0)
+      throw ToolError("INVALID_ARGUMENT", "before/after: nonnegative integers; previews cap at 40 lines");
+    return value>40?40:value.get<int>();
+  };
+  const auto before=window("before",1), after=window("after",2);
+  if(mode!="content" && (args.contains("before") || args.contains("after")))
+    throw ToolError("INVALID_ARGUMENT", "before/after require mode=content");
   auto patterns=args.value("glob", json::array());
   if(!patterns.is_array() || patterns.size()>32) throw ToolError("INVALID_ARGUMENT", "glob: at most 32 patterns");
   (void)selected("",patterns);
@@ -128,25 +141,42 @@ json project_query(const fs::path& root, const json& args) {
       if(!single && bytes>1024*1024) {++skipped_files;scan_complete=false;continue;}
       std::ifstream file(safe,std::ios::binary); if(!file) throw ToolError("ACCESS_DENIED","Cannot read selected file");
       std::array<char,65536> block{}; std::string overlap, line_prefix; size_t line=1, hits=0; bool matched=false, binary=false;
-      std::string previous;std::vector<std::pair<size_t,int>> pending_context;
+      constexpr size_t context_budget=12000;
+      std::deque<std::pair<std::string,bool>> previous;
+      std::vector<std::pair<size_t,int>> pending_context;
+      bool line_clipped=false;
       auto finish=[&]() {
         for(auto& pending:pending_context) if(pending.second>0) {
           auto context=items[pending.first]["context"].get<std::string>();
           auto extra="\n"+std::to_string(line)+": "+line_prefix;
-          context+=extra.substr(0,context.size()<4000?4000-context.size():0);items[pending.first]["context"]=context;--pending.second;
+          // Never cut a source line silently or emit broken UTF-8.
+          if(context.size()+extra.size()<=context_budget) context+=extra;
+          else items[pending.first]["clipped"]=true;
+          if(line_clipped) items[pending.first]["clipped"]=true;
+          items[pending.first]["context"]=context;--pending.second;
         }
+        std::erase_if(pending_context,[](const auto& pending){return pending.second<=0;});
         if(matched) {
           ++hits;
           if(mode=="content") {
-            json item={{"path",relative_display(safe,root)},{"line",line},{"context",previous+std::to_string(line)+": "+line_prefix}};
-            if(line_prefix.size()==1800) item["clipped"]=true;
+            std::string context=std::to_string(line)+": "+line_prefix;
+            bool clipped=line_clipped;
+            for(auto it=previous.rbegin();it!=previous.rend();++it) {
+              if(context.size()+it->first.size()+1>context_budget) {clipped=true;break;}
+              context=it->first+"\n"+context;clipped=clipped || it->second;
+            }
+            json item={{"path",relative_display(safe,root)},{"line",line},{"context",context}};
+            if(clipped) item["clipped"]=true;
             auto prior=items.size();
             add(item);
-            if(items.size()>prior) pending_context.emplace_back(prior,2);
+            if(items.size()>prior && after) pending_context.emplace_back(prior,after);
           }
         }
-        previous=std::to_string(line)+": "+line_prefix+"\n";
-        ++line; matched=false;line_prefix.clear();overlap.clear();
+        if(before) {
+          previous.emplace_back(std::to_string(line)+": "+line_prefix,line_clipped);
+          if(previous.size()>static_cast<size_t>(before)) previous.pop_front();
+        }
+        ++line; matched=false;line_clipped=false;line_prefix.clear();overlap.clear();
       };
       while(file && scanned<budget) {
         file.read(block.data(),static_cast<std::streamsize>(std::min<size_t>(block.size(),budget-scanned)));
@@ -156,12 +186,13 @@ json project_query(const fs::path& root, const json& args) {
         while(begin<n) {
           size_t end=begin; while(end<n && block[end]!='\n') ++end;
           std::string fragment(block.data()+begin,end-begin);
+          if(line_prefix.size()+fragment.size()>1800) line_clipped=true;
           if(line_prefix.size()<1800) line_prefix+=fragment.substr(0,1800-line_prefix.size());
           auto combined=overlap+fragment;
           auto position=lower(combined).find(needle);
           if(!matched && position!=std::string::npos) {
             matched=true;
-            if(lower(line_prefix).find(needle)==std::string::npos) line_prefix=combined.substr(position>200?position-200:0,1800);
+            if(lower(line_prefix).find(needle)==std::string::npos) {line_prefix=combined.substr(position>200?position-200:0,1800);line_clipped=true;}
           }
           overlap=combined.substr(combined.size()>needle.size()?combined.size()-needle.size():0);
           if(end<n) finish();
@@ -186,7 +217,12 @@ json project_query(const fs::path& root, const json& args) {
   }
   json result={{"mode",mode},{"matching_files",matching_files},{"matching_lines",matching_lines},{"files_scanned",scanned_files},{"scanned_bytes",scanned},
     {"skipped_files",skipped_files},{"scan_complete",scan_complete},{"complete",scan_complete && result_complete},
-    {"note","Literal case-insensitive search; counts are matching lines within bounded scope. Skipped/hidden/generated files are outside the result. glob supports *, **, ?, !exclude."}};
+    {"note","Case-insensitive literal search; counts are matching lines. Scope excludes hidden/generated/skipped files."}};
+  if(mode=="content") {result["before"]=before;result["after"]=after;}
+  if(requested_limit>100) result["limit_capped_from"]=requested_limit;
+  for(const auto& key:{"before","after"}) if(args.contains(key) && args[key]>40) {
+    result[std::string(key)+"_capped_from"]=args[key];result["context_complete"]=false;
+  }
   if(mode!="summary") result["matches"]=items;
   auto safe=json::parse(result.dump(-1,' ',false,json::error_handler_t::replace));
   while(safe.dump().size()>17500 && safe.contains("matches") && !safe["matches"].empty()) {safe["matches"].erase(safe["matches"].size()-1);safe["complete"]=false;}

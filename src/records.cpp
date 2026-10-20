@@ -82,8 +82,12 @@ json load_record(const fs::path& root,const std::string& ref) {
 }
 json record_page(const json& rows,const json& args,size_t reserved_bytes) {
   if(!rows.is_array()) throw ToolError("INVALID_ARGUMENT","Rows must be an array");
-  auto offset=args.value("offset",0LL), limit=args.value("limit",100LL), budget=args.value("max_bytes",12000LL);
-  if(offset<0 || limit<1 || limit>512 || budget<512 || budget>16000) throw ToolError("INVALID_ARGUMENT","offset >=0, limit 1..512, max_bytes 512..16000");
+  auto offset=args.value("offset",0LL), budget=args.value("max_bytes",12000LL);
+  auto requested_limit=args.value("limit",json(100));
+  if((!requested_limit.is_number_integer() && !requested_limit.is_number_unsigned()) || requested_limit<1)
+    throw ToolError("INVALID_ARGUMENT","limit: positive integer; pages cap at 512 rows");
+  auto limit=requested_limit>512?512:requested_limit.get<long long>();
+  if(offset<0 || budget<512 || budget>16000) throw ToolError("INVALID_ARGUMENT","offset >=0, max_bytes 512..16000");
   auto where=args.value("equals",json::object()),fields=args.value("fields",json::array());
   if(!where.is_object() || where.size()>32 || !fields.is_array() || fields.size()>32) throw ToolError("INVALID_ARGUMENT","equals/fields: at most 32 top-level keys");
   for(const auto& key:fields) if(!key.is_string()) throw ToolError("INVALID_ARGUMENT","fields entries must be strings");
@@ -96,6 +100,7 @@ json record_page(const json& rows,const json& args,size_t reserved_bytes) {
     if(hit) filtered.push_back(index);
   }
   json out={{"items",json::array()},{"total",filtered.size()},{"next_offset",offset},{"complete",false},{"offset_semantics","Offset is in the filtered row sequence; keep equals/fields unchanged while paging."}};
+  if(requested_limit>512) out["limit_capped_from"]=requested_limit;
   for(size_t i=static_cast<size_t>(offset);i<filtered.size() && out["items"].size()<static_cast<size_t>(limit);++i) {
     const auto& row=rows[filtered[i]];
     json item;

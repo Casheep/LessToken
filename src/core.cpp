@@ -98,7 +98,7 @@ fs::path confined(const fs::path& root, const fs::path& input) {
 }
 static bool protected_line(const std::string& line) {
   auto s = lower(line);
-  static const std::vector<std::string> needles = {"error", "fatal", "warn", "fail", "exception", "assert", "expected", "actual", "错误", "失败", "异常", "警告", "期望", "实际"};
+  static const std::vector<std::string> needles = {"error", "fatal", "warn", "fail", "exception", "assert", "traceback", "panic", "expected", "actual", "错误", "失败", "异常", "警告", "期望", "实际"};
   return std::any_of(needles.begin(), needles.end(), [&](const auto& n) { return s.find(n) != std::string::npos; });
 }
 Reduction reduce(const std::string& input, const std::string& kind, size_t budget) {
@@ -127,12 +127,44 @@ Reduction reduce(const std::string& input, const std::string& kind, size_t budge
   if (kind != "log" && kind != "test") return {input, "passthrough", 0};
   auto source = lines(input);
   std::vector<std::string> dedup;
+  bool folded_block = false;
   for (size_t i = 0; i < source.size();) {
     size_t j = i + 1;
     while (j < source.size() && source[j] == source[i]) ++j;
-    dedup.push_back(source[i]);
-    if (j - i > 1) dedup.push_back("[previous line repeated " + std::to_string(j - i - 1) + " more times]");
-    i = j;
+    if (j - i > 1) {
+      dedup.push_back(source[i]);
+      dedup.push_back("[previous line repeated " + std::to_string(j - i - 1) + " more times]");
+      i = j;
+      continue;
+    }
+    // Exact adjacent blocks only: no timestamp stripping, semantic summaries or
+    // cross-gap deduplication. Retain order and multiplicity, and leave diagnostic
+    // blocks expanded so separate failures and their context remain visible.
+    size_t best_width = 0, best_repeats = 0, best_gain = 128;
+    for (size_t width = 2; width <= 16 && i + 2 * width <= source.size(); ++width) {
+      if (source[i] != source[i + width]) continue;
+      size_t block_bytes = 0; bool diagnostic = false;
+      for (size_t k = 0; k < width; ++k) {
+        block_bytes += source[i + k].size() + 1;
+        diagnostic = diagnostic || protected_line(source[i + k]);
+      }
+      if (diagnostic) continue;
+      size_t repeats = 1;
+      while (i + (repeats + 1) * width <= source.size()
+          && std::equal(source.begin() + static_cast<long long>(i),
+              source.begin() + static_cast<long long>(i + width),
+              source.begin() + static_cast<long long>(i + repeats * width))) ++repeats;
+      auto marker = "[previous " + std::to_string(width) + " lines repeated " + std::to_string(repeats - 1) + " more times]";
+      const auto removed = (repeats - 1) * block_bytes;
+      if (repeats > 1 && removed > marker.size() + 1 + best_gain) {
+        best_gain = removed - marker.size() - 1; best_width = width; best_repeats = repeats;
+      }
+    }
+    if (best_width) {
+      for (size_t k = 0; k < best_width; ++k) dedup.push_back(source[i + k]);
+      dedup.push_back("[previous " + std::to_string(best_width) + " lines repeated " + std::to_string(best_repeats - 1) + " more times]");
+      i += best_width * best_repeats; folded_block = true;
+    } else {dedup.push_back(source[i]); ++i;}
   }
   std::vector<bool> keep(dedup.size(), true);
   bool bounded = false;
@@ -161,7 +193,7 @@ Reduction reduce(const std::string& input, const std::string& kind, size_t budge
   auto text = result.str();
   // Avoid wrappers that cost more than the original small result.
   if (text.size() + 256 >= input.size()) return {input, "passthrough", 0};
-  return {text, bounded && omitted ? "test-pass-fold" : "exact-line-fold", omitted};
+  return {text, bounded && omitted ? "test-pass-fold" : folded_block ? "exact-block-fold" : "exact-line-fold", omitted};
 }
 Store::Store(fs::path path) : root(fs::absolute(std::move(path))) {
   fs::create_directories(root / "results");
@@ -224,7 +256,9 @@ std::string display(const std::string& raw, const Reduction& reduction, Store& s
     if (track) store.record("", raw.size(), raw.size(), reduction.mode);
     return raw;
   }
-  auto suffix="\n[LessToken " + reduction.mode + "; ref=" + std::string(32,'0') + "; fetch/search for complete original]\n";
+  const bool lossless=reduction.mode=="exact-line-fold" || reduction.mode=="exact-block-fold" || reduction.mode=="json-whitespace-only";
+  const std::string guidance=lossless?"; lossless=true; all source content represented; original retrieval optional":"; fetch/search for complete original";
+  auto suffix="\n[LessToken " + reduction.mode + "; ref=" + std::string(32,'0') + guidance + "]\n";
   auto visible=reduction.text.size()+suffix.size();
   // Include reference overhead. Marginal reductions are not worth losing context.
   if (visible >= raw.size() || raw.size()-visible < std::max<size_t>(512,raw.size()/5)) {
@@ -233,7 +267,7 @@ std::string display(const std::string& raw, const Reduction& reduction, Store& s
   }
   // Save before emitting a lossy view. Save failure propagates to the caller's raw fallback.
   auto ref = store.save(raw, metadata);
-  auto result = reduction.text + "\n[LessToken " + reduction.mode + "; ref=" + ref + "; fetch/search for complete original]\n";
+  auto result = reduction.text + "\n[LessToken " + reduction.mode + "; ref=" + ref + guidance + "]\n";
   if (track) store.record(ref, raw.size(), result.size(), reduction.mode);
   return result;
 }
@@ -241,7 +275,7 @@ json doctor() {
   return {{"name", "LessToken"}, {"version", version}, {"executable", path_text(executable_path())},
     {"data_directory", path_text(data_root())}, {"local_only", true}, {"api_key_required", false},
     {"mcp_transport", "stdio"}, {"host_verification", "Requires installation and hook approval in the target Codex host."},
-    {"hook_scope", "Literal log/JSON reads, narrow git reads, and supported test/build argv in bypassPermissions mode; bounded post-output reduction. Unsupported/nested calls pass through."},
+    {"hook_scope", "Explicit small-file prompt snapshots; PowerShell literal log/JSON and git reads; supported test/build argv in bypassPermissions mode. No post-output hook. Unsupported/nested calls pass through."},
     {"measurement", "Actual bytes only. No billed-token or subscription savings claim."}};
 }
 }

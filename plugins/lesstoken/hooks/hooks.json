@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${PLUGIN_ROOT}/hooks/invoke.ps1\" prompt",
+            "timeout": 10,
+            "additionalContextLimit": 16000
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "^(Bash|exec_command|shell_command)$",
@@ -10,11 +22,6 @@
           }
         ]
       }
-    ],
-    "PostToolUse": [
-      { "matcher": "Bash", "hooks": [
-        { "type": "command", "command": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${PLUGIN_ROOT}/hooks/invoke.ps1\" post" }
-      ] }
     ]
   }
 }
