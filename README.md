@@ -2,7 +2,7 @@
 
 为 Codex 减少重复输出和不必要的工具往返的本地插件，在尽可能不降低回答质量的前提下减少 token 消耗。核心使用 C++20，支持 Windows x64 的 Codex 桌面端和 CLI。
 
-当前版本：**0.2.0-beta.10**。
+当前版本：**0.2.0-beta.11**。
 
 ## 能做什么
 
@@ -21,7 +21,7 @@
 
 ### 普通命令行
 
-下载 [Windows x64 安装包](https://github.com/Casheep/LessToken/releases/download/v0.2.0-beta.10/LessToken-0.2.0-beta.10-windows-x64.zip)，解压到一个长期保留的目录，在该目录打开 PowerShell：
+下载 [Windows x64 安装包](https://github.com/Casheep/LessToken/releases/download/v0.2.0-beta.11/LessToken-0.2.0-beta.11-windows-x64.zip)，解压到一个长期保留的目录，在该目录打开 PowerShell：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
