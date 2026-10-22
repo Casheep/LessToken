@@ -2,7 +2,7 @@
 
 为 Codex 减少重复输出和不必要的工具往返的本地插件，在尽可能不降低回答质量的前提下减少 token 消耗。核心使用 C++20，支持 Windows x64 的 Codex 桌面端和 CLI。
 
-当前版本：**0.2.0-beta.11**。
+当前版本：**0.2.0-beta.12**。
 
 ## 能做什么
 
@@ -15,13 +15,15 @@
 
 综合聊天测试中，总 token 用量相比关闭插件减少约 **44%**；同时，针对长聊天的优化在专项测试中额外减少约 **36.3%** 的 token 用量。
 
+历史上下文压缩专项测试中，通过无损精简重复构建日志，单次压缩的总 token 用量相比上一版减少约 **31.2%**，压缩后的关键事实核对通过。该结果限于已测场景。
+
 安装后，Hooks 自动处理支持的命令，Codex 也可按任务选择 MCP 工具。无需每次手动提醒，但并非所有操作都会经过插件。
 
 ## 安装
 
 ### 普通命令行
 
-下载 [Windows x64 安装包](https://github.com/Casheep/LessToken/releases/download/v0.2.0-beta.11/LessToken-0.2.0-beta.11-windows-x64.zip)，解压到一个长期保留的目录，在该目录打开 PowerShell：
+下载 [Windows x64 安装包](https://github.com/Casheep/LessToken/releases/download/v0.2.0-beta.12/LessToken-0.2.0-beta.12-windows-x64.zip)，解压到一个长期保留的目录，在该目录打开 PowerShell：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1

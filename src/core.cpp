@@ -101,6 +101,31 @@ static bool protected_line(const std::string& line) {
   static const std::vector<std::string> needles = {"error", "fatal", "warn", "fail", "exception", "assert", "traceback", "panic", "expected", "actual", "错误", "失败", "异常", "警告", "期望", "实际"};
   return std::any_of(needles.begin(), needles.end(), [&](const auto& n) { return s.find(n) != std::string::npos; });
 }
+static std::string exact_block_table(const std::vector<std::string>& source,size_t start,size_t width,size_t repeats) {
+  // Store every variable value explicitly. No timestamp normalization, inferred
+  // numeric ranges, reordered rows or omitted values are permitted.
+  if(width<=16) return {};
+  const auto& first=source[start];size_t prefix=first.size(),suffix=first.size(),raw_bytes=0;
+  for(size_t i=0;i<width;++i) {
+    const auto& line=source[start+i];raw_bytes+=line.size()+1;
+    size_t n=0;while(n<std::min(prefix,line.size()) && first[n]==line[n]) ++n;prefix=n;
+    n=0;while(n<std::min(suffix,line.size()) && first[first.size()-n-1]==line[line.size()-n-1]) ++n;suffix=n;
+  }
+  while(prefix && prefix<first.size() && (static_cast<unsigned char>(first[prefix])&0xc0)==0x80) --prefix;
+  for(size_t i=0;i<width;++i) suffix=std::min(suffix,source[start+i].size()-prefix);
+  while(suffix && (static_cast<unsigned char>(first[first.size()-suffix])&0xc0)==0x80) --suffix;
+  if(prefix+suffix<24) return {};
+  json values=json::array();
+  for(size_t i=0;i<width;++i) {
+    const auto& line=source[start+i];values.push_back(line.substr(prefix,line.size()-prefix-suffix));
+  }
+  try {
+    auto table=json{{"prefix",first.substr(0,prefix)},{"values",values},{"suffix",first.substr(first.size()-suffix)},
+      {"repeat",repeats}}.dump();
+    auto result="[Exact repeated source block: each line = prefix + value + suffix; values stay in order; repeat the entire block repeat times]\n"+table;
+    return result.size()+128<raw_bytes?result:std::string();
+  } catch(const json::exception&) {return {};}
+}
 Reduction reduce(const std::string& input, const std::string& kind, size_t budget) {
   if (kind == "raw" || kind == "code" || input.size() < 512 || input.find('\0') != std::string::npos)
     return {input, "passthrough", 0};
@@ -127,7 +152,7 @@ Reduction reduce(const std::string& input, const std::string& kind, size_t budge
   if (kind != "log" && kind != "test") return {input, "passthrough", 0};
   auto source = lines(input);
   std::vector<std::string> dedup;
-  bool folded_block = false;
+  bool folded_block = false, folded_table = false;
   for (size_t i = 0; i < source.size();) {
     size_t j = i + 1;
     while (j < source.size() && source[j] == source[i]) ++j;
@@ -141,7 +166,9 @@ Reduction reduce(const std::string& input, const std::string& kind, size_t budge
     // cross-gap deduplication. Retain order and multiplicity, and leave diagnostic
     // blocks expanded so separate failures and their context remain visible.
     size_t best_width = 0, best_repeats = 0, best_gain = 128;
-    for (size_t width = 2; width <= 16 && i + 2 * width <= source.size(); ++width) {
+    // Build/progress groups often span more than 16 lines. Keep a fixed bound,
+    // and still compare every original line before encoding a repeat.
+    for (size_t width = 2; width <= 64 && i + 2 * width <= source.size(); ++width) {
       if (source[i] != source[i + width]) continue;
       size_t block_bytes = 0; bool diagnostic = false;
       for (size_t k = 0; k < width; ++k) {
@@ -161,8 +188,13 @@ Reduction reduce(const std::string& input, const std::string& kind, size_t budge
       }
     }
     if (best_width) {
-      for (size_t k = 0; k < best_width; ++k) dedup.push_back(source[i + k]);
-      dedup.push_back("[previous " + std::to_string(best_width) + " lines repeated " + std::to_string(best_repeats - 1) + " more times]");
+      // Test-pass omission works on physical lines, so keep its existing format.
+      auto table=kind=="log"?exact_block_table(source,i,best_width,best_repeats):std::string();
+      if(!table.empty()) {dedup.push_back(std::move(table));folded_table=true;}
+      else {
+        for (size_t k = 0; k < best_width; ++k) dedup.push_back(source[i + k]);
+        dedup.push_back("[previous " + std::to_string(best_width) + " lines repeated " + std::to_string(best_repeats - 1) + " more times]");
+      }
       i += best_width * best_repeats; folded_block = true;
     } else {dedup.push_back(source[i]); ++i;}
   }
@@ -193,7 +225,7 @@ Reduction reduce(const std::string& input, const std::string& kind, size_t budge
   auto text = result.str();
   // Avoid wrappers that cost more than the original small result.
   if (text.size() + 256 >= input.size()) return {input, "passthrough", 0};
-  return {text, bounded && omitted ? "test-pass-fold" : folded_block ? "exact-block-fold" : "exact-line-fold", omitted};
+  return {text, bounded && omitted ? "test-pass-fold" : folded_table ? "exact-affix-block-fold" : folded_block ? "exact-block-fold" : "exact-line-fold", omitted};
 }
 Store::Store(fs::path path) : root(fs::absolute(std::move(path))) {
   fs::create_directories(root / "results");
@@ -214,20 +246,31 @@ std::string Store::save(const std::string& raw, const json& metadata) {
 }
 std::string Store::fetch(const std::string& id, size_t start, size_t count) {
   if (!start || count > 500 || !count) throw std::runtime_error("Use start >= 1 and 1 <= count <= 500.");
-  std::ifstream f(result_path(root, id), std::ios::binary);
+  auto path=result_path(root,id);
+  if(!fs::is_regular_file(path)) throw ToolError("RESULT_UNAVAILABLE","Original result is not a regular file.");
+  std::ifstream f(path, std::ios::binary);
+  if(!f) throw ToolError("IO_ERROR","Cannot open original result.");
   std::ostringstream out;
   size_t current = 1, shown = 0, line_bytes = 0; std::string line; char c;
-  while (f.get(c)) {
-    if (c != '\n') { ++line_bytes; if (current >= start && line.size() < 12000) line += c; continue; }
-    if (current >= start) {
-      out << current << ": " << line;
-      if (line_bytes > line.size()) out << " [long line clipped; use byte offset paging]";
-      out << '\n'; ++shown;
+  auto emit=[&]() {
+    if(line.size()>12000) {
+      size_t end=12000;
+      while(end && (static_cast<unsigned char>(line[end]) & 0xc0)==0x80) --end;
+      line.resize(end);
     }
+    out << current << ": " << line;
+    if(line_bytes>line.size()) out << " [long line clipped; use byte offset paging]";
+    out << '\n';++shown;
+  };
+  while (f.get(c)) {
+    // Keep one lookahead byte so a clipped UTF-8 character can be removed whole.
+    if (c != '\n') { ++line_bytes; if (current >= start && line.size() < 12001) line += c; continue; }
+    if (current >= start) emit();
     if (shown >= count || out.tellp() > 14000) break;
     ++current; line.clear(); line_bytes = 0;
   }
-  if (!f && !line.empty() && shown < count) out << current << ": " << line << '\n';
+  if(f.bad()) throw ToolError("IO_ERROR","Cannot finish reading original result.");
+  if (f.eof() && line_bytes && current >= start && shown < count) emit();
   return out.str();
 }
 json Store::search(const std::string& id, const std::string& query, size_t context, size_t limit) {
@@ -257,7 +300,7 @@ std::string display(const std::string& raw, const Reduction& reduction, Store& s
     if (track) store.record("", raw.size(), raw.size(), reduction.mode);
     return raw;
   }
-  const bool lossless=reduction.mode=="exact-line-fold" || reduction.mode=="exact-block-fold" || reduction.mode=="json-whitespace-only";
+  const bool lossless=reduction.mode=="exact-line-fold" || reduction.mode=="exact-block-fold" || reduction.mode=="exact-affix-block-fold" || reduction.mode=="json-whitespace-only";
   const std::string guidance=lossless?"; lossless=true; all source content represented; original retrieval optional":"; fetch/search for complete original";
   auto suffix="\n[LessToken " + reduction.mode + "; ref=" + std::string(32,'0') + guidance + "]\n";
   auto visible=reduction.text.size()+suffix.size();
