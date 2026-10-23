@@ -1,4 +1,4 @@
-// Selected dsh-ops behaviours ported to C++ (MIT); see third_party/dsh-ops/NOTICE.md.
+// Selected dsh-ops behaviours ported to C++ (MIT); see third_party/dsh-ops/LICENSE.MIT.
 #include "native.hpp"
 #include <algorithm>
 #include <chrono>
