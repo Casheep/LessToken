@@ -24,6 +24,8 @@ fs::path executable_path();
 fs::path confined(const fs::path& root, const fs::path& input);
 std::string quote_arg(const std::string& arg);
 struct Reduction { std::string text; std::string mode = "passthrough"; size_t omitted_lines = 0; };
+bool lossless_mode(const std::string& mode);
+bool worthwhile_display(const std::string& raw, const Reduction& reduction, size_t extra_bytes = 0);
 Reduction reduce(const std::string& input, const std::string& kind, size_t budget = 6000);
 struct Store {
   fs::path root;

@@ -19,21 +19,25 @@ static json preview_integer(size_t value,size_t maximum,size_t minimum=1) {
 }
 static json tools(bool allow_write) {
   auto text = json{{"type", "string"}};
-  auto read_schema=schema({{"path",text},{"files",{{"type","array"},{"items",text},{"minItems",1},{"maxItems",16}}},
+  auto file_slice=schema({{"path",text},{"start",integer(1,10000000)},{"count",integer(20,500)},
+    {"kind",{{"type","string"},{"enum",{"auto","raw","code","log","test","json"}}}}},{"path"});
+  auto read_schema=schema({{"path",text},{"files",{{"type","array"},{"items",{{"oneOf",json::array({text,file_slice})}}},{"minItems",1},{"maxItems",16}}},
     {"start",integer(1,10000000)},{"count",integer(100,500)},
     {"kind",{{"type","string"},{"enum",{"auto","raw","code","log","test","json"}},{"default","auto"}}},
     {"offset",{{"type","integer"},{"minimum",0}}},{"bytes",integer(12000,16000)}});
   read_schema["oneOf"]=json::array({{{"required",{"path"}}},{{"required",{"files"}}}});
+  auto search_schema=schema({{"query",text},{"queries",{{"type","array"},{"items",text},{"minItems",1},{"maxItems",8}}},
+    {"path",text},{"limit",preview_integer(10,100)},
+    {"mode",{{"type","string"},{"enum",{"content","files","count","summary"}},{"default","content"}}},
+    {"glob",{{"type","array"},{"items",text},{"maxItems",32}}},
+    {"before",preview_integer(1,40,0)},{"after",preview_integer(2,40,0)}});
+  search_schema["oneOf"]=json::array({{{"required",{"query"}}},{{"required",{"queries"}}}});
   auto list=json::array({
-    {{"name", "lt_read"}, {"description", "Read project text: path or files[1..16]. Batch defaults to 20 lines/file; next_file continues a bounded batch. lossless=true views represent all content; original retrieval is optional. Code slices are exact; clipped views have refs."},
+    {{"name", "lt_read"}, {"description", "Read project text: path or files[1..16] of path strings or {path,start?,count?,kind?}. Batch defaults to 20 lines/file; per-file fields override shared options. next_file continues a bounded batch. lossless=true views represent all content; original retrieval is optional. Code slices are exact; clipped views have refs."},
       {"inputSchema", read_schema},
       {"annotations", {{"readOnlyHint", true}, {"openWorldHint", false}}}},
-    {{"name", "lt_search"}, {"description", "Literal project search. Set before/after (0..40) to get needed source windows in one call; overlaps merge. Prefer mode=files/count/summary when text is unnecessary. line/lines identify hits; limit counts hits, not groups. glob supports include/!exclude. Check complete/scan_complete and clipped."},
-      {"inputSchema", schema({{"query", text}, {"path", text}, {"limit", preview_integer(10, 100)},
-        {"mode",{{"type","string"},{"enum",{"content","files","count","summary"}},{"default","content"}}},
-        {"glob",{{"type","array"},{"items",text},{"maxItems",32}}},
-        {"before",preview_integer(1,40,0)},
-        {"after",preview_integer(2,40,0)}}, {"query"})},
+    {{"name", "lt_search"}, {"description", "Literal project search: query or queries[1..8]. Multiple queries share original source windows and report independent counts. Set before/after (0..40); overlaps merge. Prefer mode=files/count/summary when text is unnecessary. line/lines identify hits; limit counts hits, not groups. glob supports include/!exclude. Check complete/scan_complete and clipped."},
+      {"inputSchema", search_schema},
       {"annotations", {{"readOnlyHint", true}, {"openWorldHint", false}}}},
     {{"name", "lt_result"}, {"description", "Raw refs: query, start/count or byte offset/bytes. Tables: put exactly one of path (project JSON-array file), items or source_ref; include equals/fields to receive the selected page immediately. Prefer path over read then put when the file and filters are known. Page refs with unchanged equals/fields; offsets follow filtered rows. release deletes tables only. j- refs page batch audits. Tables expire in 24h and are project-scoped."},
       {"inputSchema", schema({{"ref", text}, {"query", text}, {"start", integer(1, 10000000)}, {"count", integer(100, 500)},
@@ -67,6 +71,10 @@ static size_t number(const json& args, const std::string& key, size_t def, size_
   if (value < 1 || static_cast<unsigned long long>(value) > maximum) throw std::runtime_error("Out-of-range argument: " + key);
   return static_cast<size_t>(value);
 }
+static std::string inferred_read_kind(const fs::path& path) {
+  auto ext=lower(path_text(path.extension()));
+  return ext==".log" || ext==".out"?"log":ext==".json"?"json":"raw";
+}
 static std::string slice(const fs::path& path, size_t start, size_t count, size_t& consumed) {
   std::ifstream f(path, std::ios::binary);
   if (!f) throw std::runtime_error("Cannot read project file.");
@@ -77,8 +85,9 @@ static std::string slice(const fs::path& path, size_t start, size_t count, size_
   while (f.get(c)) {
     if (++scanned > input_limit) throw std::runtime_error("Scan exceeds 16 MiB; narrow the file.");
     if (c != '\n') {
+      if (current + 1 < start) continue;
       if (line.size() < response_limit + 1) line += c;
-      else throw std::runtime_error("Line exceeds response limit; use a narrower text source.");
+      else throw std::runtime_error("Line exceeds response limit; use byte offset paging.");
       continue;
     }
     ++current;
@@ -86,6 +95,7 @@ static std::string slice(const fs::path& path, size_t start, size_t count, size_
     line.clear();
     if (current >= start + count - 1 || out.size() > response_limit) return bounded_text(out);
   }
+  if (f.bad()) throw std::runtime_error("Cannot finish reading project file.");
   if (!line.empty() && ++current >= start) { consumed += line.size(); out += std::to_string(current) + ": " + line + "\n"; }
   return bounded_text(out);
 }
@@ -98,12 +108,32 @@ std::string mcp_call(const std::string& name, const json& args, const fs::path& 
       if(args.contains("path") || args.contains("offset") || args.contains("bytes") || !args["files"].is_array() || args["files"].empty() || args["files"].size()>16) throw ToolError("INVALID_ARGUMENT","Use path or files[1..16]; batch reads do not accept byte offsets");
       json result={{"results",json::array()},{"next_file",0},{"complete",false}};
       for(size_t i=0;i<args["files"].size();++i) {
-        auto path=args["files"][i].get<std::string>();if(path.size()>4096) throw ToolError("INVALID_ARGUMENT","File path too long");
-        json item={{"path",path}};
+        json item=json::object();
         try {
-          auto single=args;single.erase("files");single["path"]=path;if(!single.contains("count") && single.value("kind",std::string("auto"))!="log" && single.value("kind",std::string("auto"))!="test" && single.value("kind",std::string("auto"))!="json" && from_utf8(path).extension()!=".log" && from_utf8(path).extension()!=".json") single["count"]=20;
+          const auto& entry=args["files"][i];auto single=args;single.erase("files");
+          if(entry.is_string()) single["path"]=entry;
+          else if(entry.is_object()) {
+            for(auto it=entry.begin();it!=entry.end();++it) {
+              if(it.key()!="path" && it.key()!="start" && it.key()!="count" && it.key()!="kind") throw ToolError("INVALID_ARGUMENT","File slices accept only path/start/count/kind");
+              single[it.key()]=it.value();
+            }
+            if(!entry.contains("path")) throw ToolError("INVALID_ARGUMENT","File slice requires path");
+          } else throw ToolError("INVALID_ARGUMENT","Batch entries must be path strings or file-slice objects");
+          if(!single["path"].is_string()) throw ToolError("INVALID_ARGUMENT","File path must be a string");
+          auto path=single["path"].get<std::string>();
+          if(path.empty() || path.size()>4096) throw ToolError("INVALID_ARGUMENT","Use a nonempty file path of at most 4096 bytes");
+          if(std::any_of(path.begin(),path.end(),[](unsigned char c){return c<32 || c==127;})) throw ToolError("INVALID_ARGUMENT","File paths must not contain control characters");
+          item["path"]=path;
+          auto kind=single.value("kind",std::string("auto"));
+          if(kind=="auto") kind=inferred_read_kind(confined(root,from_utf8(path)));
+          if(!single.contains("count") && kind!="log" && kind!="test" && kind!="json") single["count"]=20;
           auto text=mcp_call(name,single,root,store,allow_write);
-          if(json(text).dump(-1,' ',false,json::error_handler_t::replace).size()>4500) {
+          item["text"]=text;
+          auto standalone=json{{"results",json::array({item})},{"next_file",i+1},{"complete",false}};
+          // Keep complete selected evidence whenever a response can carry it.
+          // A later file can continue in the next batch instead of forcing a
+          // second retrieval of text that would fit here without clipping.
+          if(standalone.dump(-1,' ',false,json::error_handler_t::replace).size()>17000) {
             auto ref=store.save(text,{{"kind","selected-read-view"},{"path",path}});
             size_t n=2000;while(n && n<text.size() && (static_cast<unsigned char>(text[n])&0xc0)==0x80) --n;
             text=text.substr(0,n)+"\n[Selected view clipped; ref="+ref+"; fetch this view or request a narrower original slice.]";
@@ -111,8 +141,8 @@ std::string mcp_call(const std::string& name, const json& args, const fs::path& 
           item["text"]=text;
         } catch(const ToolError& e) {item["error"]=e.detail;} catch(const std::exception& e) {item["error"]=ToolError("READ_FAILED",std::string(e.what()).substr(0,500)).detail;}
         result["results"].push_back(item);
-        if(result.dump(-1,' ',false,json::error_handler_t::replace).size()>17000) {result["results"].erase(result["results"].size()-1);break;}
         result["next_file"]=i+1;
+        if(result.dump(-1,' ',false,json::error_handler_t::replace).size()>17000) {result["results"].erase(result["results"].size()-1);result["next_file"]=i;break;}
       }
       result["complete"]=result["next_file"].get<size_t>()==args["files"].size();
       return result.dump(-1,' ',false,json::error_handler_t::replace);
@@ -130,10 +160,7 @@ std::string mcp_call(const std::string& name, const json& args, const fs::path& 
       if (head.find('\0') != std::string::npos || head.starts_with("\xff\xfe") || head.starts_with("\xfe\xff"))
         throw std::runtime_error("UTF-16/binary file: convert a copy to UTF-8 for text tools, or use explicit byte offset paging (invalid UTF-8 replaced in previews). Original file is unchanged.");
     }
-    if (kind == "auto") {
-      auto ext = lower(path_text(path.extension()));
-      kind = ext == ".log" || ext == ".out" ? "log" : ext == ".json" ? "json" : "raw";
-    }
+    if (kind == "auto") kind=inferred_read_kind(path);
     size_t consumed = 0;
     if (kind == "raw" || kind == "code") {
       auto out = slice(path, number(args, "start", 1, 10000000), number(args, "count", 100, 500), consumed);

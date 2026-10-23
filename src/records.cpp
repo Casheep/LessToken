@@ -101,17 +101,22 @@ json record_page(const json& rows,const json& args,size_t reserved_bytes) {
   }
   json out={{"items",json::array()},{"total",filtered.size()},{"next_offset",offset},{"complete",false},{"offset_semantics","Offset is in the filtered row sequence; keep equals/fields unchanged while paging."}};
   if(requested_limit>512) out["limit_capped_from"]=requested_limit;
+  auto serialized=out.dump().size()+reserved_bytes;
   for(size_t i=static_cast<size_t>(offset);i<filtered.size() && out["items"].size()<static_cast<size_t>(limit);++i) {
     const auto& row=rows[filtered[i]];
     json item;
     if(fields.empty()) item=row;
     else {item=json::object();for(const auto& key:fields) {auto name=key.get<std::string>();if(row.contains(name)) item[name]=row[name];}}
-    out["items"].push_back(item);out["next_offset"]=i+1;
-    if(out.dump().size()+reserved_bytes>static_cast<size_t>(budget)) {
-      out["items"].erase(out["items"].size()-1);out["next_offset"]=i;
+    // Preserve the exact existing response budget without serializing all prior
+    // rows again for every candidate row.
+    const auto next=serialized+item.dump().size()+(out["items"].empty()?0:1)
+      +std::to_string(i+1).size()-std::to_string(out["next_offset"].get<size_t>()).size();
+    if(next>static_cast<size_t>(budget)) {
+      out["next_offset"]=i;
       if(out["items"].empty()) throw ToolError("OUTPUT_LIMIT","One row exceeds max_bytes; select fewer fields or raise the byte budget");
       break;
     }
+    out["items"].push_back(std::move(item));out["next_offset"]=i+1;serialized=next;
   }
   out["complete"]=out["next_offset"].get<size_t>()>=filtered.size();return out;
 }

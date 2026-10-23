@@ -19,11 +19,7 @@ config.toml
 *.pfx
 .vs/
 .idea/
-research/serena-mcp.json
-research/context-mode-mcp.json
-research/lesstoken-mcp.json
-research/plugin-load-results.json
-research/hook-results.json
+/research/
 
 # Local development and validation material is never part of public submissions.
 /tests/

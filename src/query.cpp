@@ -75,6 +75,12 @@ static void merge_contexts(json& items,size_t first) {
     auto lines=left.value("lines",json::array({left["line"]}));
     for(const auto& line:right.value("lines",json::array({right["line"]}))) lines.push_back(line);
     merged["lines"]=lines;
+    if(right.contains("matched_queries")) {
+      auto queries=left.at("matched_queries");
+      for(const auto& query:right.at("matched_queries"))
+        if(std::find(queries.begin(),queries.end(),query)==queries.end()) queries.push_back(query);
+      merged["matched_queries"]=std::move(queries);
+    }
     if(context.size()>12000 || merged.dump().size()>=left.dump().size()+right.dump().size()) {++index;continue;}
     items[index]=std::move(merged);items.erase(index+1);
   }
@@ -82,8 +88,19 @@ static void merge_contexts(json& items,size_t first) {
 json project_query(const fs::path& root, const json& args) {
   auto mode=args.value("mode", std::string("content"));
   if(mode!="content" && mode!="files" && mode!="count" && mode!="summary") throw ToolError("INVALID_ARGUMENT", "mode: content, files, count or summary");
-  auto query=args.at("query").get<std::string>();
-  if(query.empty() || query.size()>1024 || query.find('\0')!=std::string::npos) throw ToolError("INVALID_ARGUMENT", "Use a literal query of 1..1024 bytes");
+  const bool multi=args.contains("queries");
+  if(multi==args.contains("query")) throw ToolError("INVALID_ARGUMENT","Use exactly one of query or queries[1..8]");
+  auto requested=multi?args.at("queries"):json::array({args.at("query")});
+  if(!requested.is_array() || requested.empty() || requested.size()>8) throw ToolError("INVALID_ARGUMENT","queries requires 1..8 literal strings");
+  std::vector<std::string> queries,needles;size_t longest=0;
+  for(const auto& value:requested) {
+    if(!value.is_string()) throw ToolError("INVALID_ARGUMENT","Queries must be literal strings");
+    auto query=value.get<std::string>();
+    if(query.empty() || query.size()>1024 || query.find('\0')!=std::string::npos) throw ToolError("INVALID_ARGUMENT","Use literal queries of 1..1024 bytes");
+    longest=std::max(longest,query.size());queries.push_back(query);needles.push_back(lower(query));
+  }
+  if(multi && requested.dump().size()>8192) throw ToolError("INVALID_ARGUMENT","Combined serialized queries must fit within 8192 bytes");
+  std::vector<size_t> query_lines(queries.size()),query_files(queries.size());
   auto requested_limit=args.value("limit",json(10));
   if((!requested_limit.is_number_integer() && !requested_limit.is_number_unsigned()) || requested_limit<1)
     throw ToolError("INVALID_ARGUMENT", "limit: positive integer; previews cap at 100 hits");
@@ -126,7 +143,6 @@ json project_query(const fs::path& root, const json& args) {
   json items=json::array(); size_t scanned=0, scanned_files=0, matching_files=0, matching_lines=0, skipped_files=0, content_hits=0;
   bool scan_complete=walk_complete, result_complete=true;
   const size_t budget=single?512u*1024*1024:16u*1024*1024;
-  auto needle=lower(query);
   auto add=[&](const json& item) {
     if((mode=="content"?content_hits:items.size())<static_cast<size_t>(limit) && items.dump(-1,' ',false,json::error_handler_t::replace).size()+item.dump(-1,' ',false,json::error_handler_t::replace).size()<15500) {items.push_back(item);if(mode=="content") ++content_hits;}
     else result_complete=false;
@@ -141,6 +157,7 @@ json project_query(const fs::path& root, const json& args) {
       if(!single && bytes>1024*1024) {++skipped_files;scan_complete=false;continue;}
       std::ifstream file(safe,std::ios::binary); if(!file) throw ToolError("ACCESS_DENIED","Cannot read selected file");
       std::array<char,65536> block{}; std::string overlap, line_prefix; size_t line=1, hits=0; bool matched=false, binary=false;
+      std::vector<bool> line_matches(queries.size());std::vector<size_t> file_query_lines(queries.size());
       constexpr size_t context_budget=12000;
       std::deque<std::pair<std::string,bool>> previous;
       std::vector<std::pair<size_t,int>> pending_context;
@@ -158,6 +175,7 @@ json project_query(const fs::path& root, const json& args) {
         std::erase_if(pending_context,[](const auto& pending){return pending.second<=0;});
         if(matched) {
           ++hits;
+          for(size_t q=0;q<queries.size();++q) if(line_matches[q]) ++file_query_lines[q];
           if(mode=="content") {
             std::string context=std::to_string(line)+": "+line_prefix;
             bool clipped=line_clipped;
@@ -166,17 +184,22 @@ json project_query(const fs::path& root, const json& args) {
               context=it->first+"\n"+context;clipped=clipped || it->second;
             }
             json item={{"path",relative_display(safe,root)},{"line",line},{"context",context}};
+            if(multi) {
+              item["matched_queries"]=json::array();
+              for(size_t q=0;q<queries.size();++q) if(line_matches[q]) item["matched_queries"].push_back(queries[q]);
+            }
             if(clipped) item["clipped"]=true;
             auto prior=items.size();
             add(item);
             if(items.size()>prior && after) pending_context.emplace_back(prior,after);
           }
         }
-        if(before) {
+        if(mode=="content" && before) {
           previous.emplace_back(std::to_string(line)+": "+line_prefix,line_clipped);
           if(previous.size()>static_cast<size_t>(before)) previous.pop_front();
         }
         ++line; matched=false;line_clipped=false;line_prefix.clear();overlap.clear();
+        std::fill(line_matches.begin(),line_matches.end(),false);
       };
       while(file && scanned<budget) {
         file.read(block.data(),static_cast<std::streamsize>(std::min<size_t>(block.size(),budget-scanned)));
@@ -186,15 +209,25 @@ json project_query(const fs::path& root, const json& args) {
         while(begin<n) {
           size_t end=begin; while(end<n && block[end]!='\n') ++end;
           std::string fragment(block.data()+begin,end-begin);
-          if(line_prefix.size()+fragment.size()>1800) line_clipped=true;
-          if(line_prefix.size()<1800) line_prefix+=fragment.substr(0,1800-line_prefix.size());
+          if(mode=="content") {
+            if(line_prefix.size()+fragment.size()>1800) line_clipped=true;
+            if(line_prefix.size()<1800) line_prefix+=fragment.substr(0,1800-line_prefix.size());
+          }
           auto combined=overlap+fragment;
-          auto position=lower(combined).find(needle);
+          auto folded=lower(combined);auto position=std::string::npos;
+          for(size_t q=0;q<needles.size();++q) if(!line_matches[q]) {
+            auto found=folded.find(needles[q]);
+            if(found!=std::string::npos) {line_matches[q]=true;position=std::min(position,found);}
+          }
           if(!matched && position!=std::string::npos) {
             matched=true;
-            if(lower(line_prefix).find(needle)==std::string::npos) {line_prefix=combined.substr(position>200?position-200:0,1800);line_clipped=true;}
+            if(mode=="content") {
+              auto prefix=lower(line_prefix);bool visible=false;
+              for(size_t q=0;q<needles.size();++q) if(line_matches[q] && prefix.find(needles[q])!=std::string::npos) {visible=true;break;}
+              if(!visible) {line_prefix=combined.substr(position>200?position-200:0,1800);line_clipped=true;}
+            }
           }
-          overlap=combined.substr(combined.size()>needle.size()?combined.size()-needle.size():0);
+          overlap=combined.substr(combined.size()>longest?combined.size()-longest:0);
           if(end<n) finish();
           begin=end+1;
         }
@@ -205,6 +238,7 @@ json project_query(const fs::path& root, const json& args) {
       if(mode=="content") merge_contexts(items,prior_items);
       if(file.bad()) {scan_complete=false;++skipped_files;}
       if(scanned>=budget && file.peek()!=std::char_traits<char>::eof()) scan_complete=false;
+      for(size_t q=0;q<queries.size();++q) {query_lines[q]+=file_query_lines[q];query_files[q]+=file_query_lines[q]>0;}
       if(hits) {
         ++matching_files; matching_lines+=hits;
         if(mode=="files" || mode=="count") {
@@ -219,6 +253,11 @@ json project_query(const fs::path& root, const json& args) {
     {"skipped_files",skipped_files},{"scan_complete",scan_complete},{"complete",scan_complete && result_complete},
     {"note","Case-insensitive literal search; counts are matching lines. Scope excludes hidden/generated/skipped files."}};
   if(mode=="content") {result["before"]=before;result["after"]=after;}
+  if(multi) {
+    result["query_counts"]=json::array();
+    for(size_t q=0;q<queries.size();++q) result["query_counts"].push_back({{"query",queries[q]},{"matching_lines",query_lines[q]},{"matching_files",query_files[q]}});
+    result["note"]=result["note"].get<std::string>()+" Multi-query totals count the union of matching lines; query_counts are independent.";
+  }
   if(requested_limit>100) result["limit_capped_from"]=requested_limit;
   for(const auto& key:{"before","after"}) if(args.contains(key) && args[key]>40) {
     result[std::string(key)+"_capped_from"]=args[key];result["context_complete"]=false;

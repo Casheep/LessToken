@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <random>
 #include <set>
 #include <sstream>
@@ -24,8 +25,9 @@ std::string read_file(const fs::path& path, size_t limit) {
   while (f) {
     f.read(buf.data(), static_cast<std::streamsize>(buf.size()));
     result.append(buf.data(), static_cast<size_t>(f.gcount()));
-    if (result.size() > limit) throw std::runtime_error("Input exceeds 16 MiB limit; request a bounded read instead.");
+    if (result.size() > limit) throw std::runtime_error("Input exceeds " + std::to_string(limit) + " byte limit; request a bounded read instead.");
   }
+  if (f.bad()) throw std::runtime_error("Cannot finish reading file: " + path_text(path));
   return result;
 }
 void write_file(const fs::path& path, const std::string& text) {
@@ -96,137 +98,6 @@ fs::path confined(const fs::path& root, const fs::path& input) {
   }
   return p;
 }
-static bool protected_line(const std::string& line) {
-  auto s = lower(line);
-  static const std::vector<std::string> needles = {"error", "fatal", "warn", "fail", "exception", "assert", "traceback", "panic", "expected", "actual", "错误", "失败", "异常", "警告", "期望", "实际"};
-  return std::any_of(needles.begin(), needles.end(), [&](const auto& n) { return s.find(n) != std::string::npos; });
-}
-static std::string exact_block_table(const std::vector<std::string>& source,size_t start,size_t width,size_t repeats) {
-  // Store every variable value explicitly. No timestamp normalization, inferred
-  // numeric ranges, reordered rows or omitted values are permitted.
-  if(width<=16) return {};
-  const auto& first=source[start];size_t prefix=first.size(),suffix=first.size(),raw_bytes=0;
-  for(size_t i=0;i<width;++i) {
-    const auto& line=source[start+i];raw_bytes+=line.size()+1;
-    size_t n=0;while(n<std::min(prefix,line.size()) && first[n]==line[n]) ++n;prefix=n;
-    n=0;while(n<std::min(suffix,line.size()) && first[first.size()-n-1]==line[line.size()-n-1]) ++n;suffix=n;
-  }
-  while(prefix && prefix<first.size() && (static_cast<unsigned char>(first[prefix])&0xc0)==0x80) --prefix;
-  for(size_t i=0;i<width;++i) suffix=std::min(suffix,source[start+i].size()-prefix);
-  while(suffix && (static_cast<unsigned char>(first[first.size()-suffix])&0xc0)==0x80) --suffix;
-  if(prefix+suffix<24) return {};
-  json values=json::array();
-  for(size_t i=0;i<width;++i) {
-    const auto& line=source[start+i];values.push_back(line.substr(prefix,line.size()-prefix-suffix));
-  }
-  try {
-    auto table=json{{"prefix",first.substr(0,prefix)},{"values",values},{"suffix",first.substr(first.size()-suffix)},
-      {"repeat",repeats}}.dump();
-    auto result="[Exact repeated source block: each line = prefix + value + suffix; values stay in order; repeat the entire block repeat times]\n"+table;
-    return result.size()+128<raw_bytes?result:std::string();
-  } catch(const json::exception&) {return {};}
-}
-Reduction reduce(const std::string& input, const std::string& kind, size_t budget) {
-  if (kind == "raw" || kind == "code" || input.size() < 512 || input.find('\0') != std::string::npos)
-    return {input, "passthrough", 0};
-  if (kind == "json") {
-    auto parsed = json::parse(input, nullptr, false);
-    if (!parsed.is_discarded()) {
-      // No array sampling, value truncation, floating-point reformatting or key dedup:
-      // whitespace-only compaction preserves every JSON token byte-for-byte.
-      std::string compact;
-      bool in_string = false, escape = false;
-      for (char c : input) {
-        if (in_string) {
-          compact += c;
-          if (escape) escape = false;
-          else if (c == '\\') escape = true;
-          else if (c == '"') in_string = false;
-        } else if (c == '"') { compact += c; in_string = true; }
-        else if (!std::isspace(static_cast<unsigned char>(c))) compact += c;
-      }
-      if (compact.size() + 256 < input.size()) return {compact, "json-whitespace-only", 0};
-    }
-    return {input, "passthrough", 0};
-  }
-  if (kind != "log" && kind != "test") return {input, "passthrough", 0};
-  auto source = lines(input);
-  std::vector<std::string> dedup;
-  bool folded_block = false, folded_table = false;
-  for (size_t i = 0; i < source.size();) {
-    size_t j = i + 1;
-    while (j < source.size() && source[j] == source[i]) ++j;
-    if (j - i > 1) {
-      dedup.push_back(source[i]);
-      dedup.push_back("[previous line repeated " + std::to_string(j - i - 1) + " more times]");
-      i = j;
-      continue;
-    }
-    // Exact adjacent blocks only: no timestamp stripping, semantic summaries or
-    // cross-gap deduplication. Retain order and multiplicity, and leave diagnostic
-    // blocks expanded so separate failures and their context remain visible.
-    size_t best_width = 0, best_repeats = 0, best_gain = 128;
-    // Build/progress groups often span more than 16 lines. Keep a fixed bound,
-    // and still compare every original line before encoding a repeat.
-    for (size_t width = 2; width <= 64 && i + 2 * width <= source.size(); ++width) {
-      if (source[i] != source[i + width]) continue;
-      size_t block_bytes = 0; bool diagnostic = false;
-      for (size_t k = 0; k < width; ++k) {
-        block_bytes += source[i + k].size() + 1;
-        diagnostic = diagnostic || protected_line(source[i + k]);
-      }
-      if (diagnostic) continue;
-      size_t repeats = 1;
-      while (i + (repeats + 1) * width <= source.size()
-          && std::equal(source.begin() + static_cast<long long>(i),
-              source.begin() + static_cast<long long>(i + width),
-              source.begin() + static_cast<long long>(i + repeats * width))) ++repeats;
-      auto marker = "[previous " + std::to_string(width) + " lines repeated " + std::to_string(repeats - 1) + " more times]";
-      const auto removed = (repeats - 1) * block_bytes;
-      if (repeats > 1 && removed > marker.size() + 1 + best_gain) {
-        best_gain = removed - marker.size() - 1; best_width = width; best_repeats = repeats;
-      }
-    }
-    if (best_width) {
-      // Test-pass omission works on physical lines, so keep its existing format.
-      auto table=kind=="log"?exact_block_table(source,i,best_width,best_repeats):std::string();
-      if(!table.empty()) {dedup.push_back(std::move(table));folded_table=true;}
-      else {
-        for (size_t k = 0; k < best_width; ++k) dedup.push_back(source[i + k]);
-        dedup.push_back("[previous " + std::to_string(best_width) + " lines repeated " + std::to_string(best_repeats - 1) + " more times]");
-      }
-      i += best_width * best_repeats; folded_block = true;
-    } else {dedup.push_back(source[i]); ++i;}
-  }
-  std::vector<bool> keep(dedup.size(), true);
-  bool bounded = false;
-  if (input.size() > budget && kind == "test") {
-    // Drop only explicit passed-test lines. Failure blocks and arbitrary context survive.
-    for (size_t i = 0; i < dedup.size(); ++i) {
-      const auto& line = dedup[i];
-      bool passed = line.find(" PASSED ") != std::string::npos || line.ends_with(" PASSED")
-        || line.find("... Passed ") != std::string::npos
-        || (line.starts_with("test ") && line.find(" ... ") != std::string::npos && line.ends_with("ok"));
-      if (passed && !protected_line(line)) keep[i] = false;
-    }
-    // Preserve neighbouring details around every diagnostic, including Chinese errors.
-    for (size_t i = 0; i < dedup.size(); ++i) if (protected_line(dedup[i])) {
-      for (size_t j = i > 2 ? i - 2 : 0; j < std::min(dedup.size(), i + 5); ++j) keep[j] = true;
-    }
-    bounded = true;
-  }
-  std::ostringstream result;
-  size_t omitted = 0;
-  for (size_t i = 0; i < dedup.size(); ++i) {
-    if (keep[i]) result << dedup[i] << '\n';
-    else ++omitted;
-  }
-  if (omitted) result << "[" << omitted << " passed-test lines omitted; full original available]\n";
-  auto text = result.str();
-  // Avoid wrappers that cost more than the original small result.
-  if (text.size() + 256 >= input.size()) return {input, "passthrough", 0};
-  return {text, bounded && omitted ? "test-pass-fold" : folded_table ? "exact-affix-block-fold" : folded_block ? "exact-block-fold" : "exact-line-fold", omitted};
-}
 Store::Store(fs::path path) : root(fs::absolute(std::move(path))) {
   fs::create_directories(root / "results");
   fs::create_directories(root / "events");
@@ -284,34 +155,57 @@ void Store::record(const std::string& ref, size_t input_bytes, size_t shown_byte
   write_file(root / "events" / (random_id() + ".json"), event.dump());
 }
 json Store::stats() {
-  size_t input = 0, shown = 0, events = 0;
+  size_t input = 0, shown = 0, events = 0, skipped = 0;
+  const auto maximum=static_cast<size_t>(std::numeric_limits<long long>::max());
   for (const auto& e : fs::directory_iterator(root / "events")) {
-    if (e.path().extension() != ".json" || !e.is_regular_file()) continue;
-    auto value = json::parse(read_file(e.path()), nullptr, false);
-    if (value.is_discarded()) continue;
-    input += value.value("input_bytes", size_t(0)); shown += value.value("shown_bytes", size_t(0)); ++events;
+    if (e.path().extension() != ".json") continue;
+    try {
+      if(fs::is_symlink(e.symlink_status()) || !e.is_regular_file()) {++skipped;continue;}
+      // Events are small counters. Corrupt, partial or concurrently removed
+      // records must not break statistics or wrap their signed byte difference.
+      auto value=json::parse(read_file(e.path(),4096),nullptr,false);
+      if(!value.is_object()) {++skipped;continue;}
+      auto counter=[&](const char* key) {
+        const auto& n=value.at(key);
+        if(!n.is_number_integer() || (!n.is_number_unsigned() && n.get<long long>()<0))
+          throw std::runtime_error("Invalid event counter.");
+        auto bytes=n.get<uint64_t>();
+        if(bytes>maximum) throw std::runtime_error("Event counter exceeds supported range.");
+        return static_cast<size_t>(bytes);
+      };
+      auto a=counter("input_bytes"),b=counter("shown_bytes");
+      if(input>maximum-a || shown>maximum-b) {++skipped;continue;}
+      input+=a;shown+=b;++events;
+    } catch(const std::exception&) {++skipped;}
   }
   return {{"events", events}, {"actual_input_bytes", input}, {"actual_shown_bytes", shown},
+    {"skipped_events",skipped},{"complete",skipped==0},
     {"net_bytes_removed", static_cast<long long>(input) - static_cast<long long>(shown)},
     {"billing_measurement", false}, {"note", "Stage-level byte counters include intermediate hook/wrapper outputs and retrieval overhead; stages may overlap. Not provider-visible totals, billed tokens, or subscription quota."}};
+}
+static std::string reduction_suffix(const std::string& mode,const std::string& ref) {
+  const std::string guidance=lossless_mode(mode)?"; lossless=true; all source content represented; original retrieval optional":"; fetch/search for complete original";
+  return "\n[LessToken " + mode + "; ref=" + ref + guidance + "]\n";
+}
+bool worthwhile_display(const std::string& raw,const Reduction& reduction,size_t extra_bytes) {
+  if(reduction.mode=="passthrough" || reduction.text.size()>=raw.size()) return false;
+  const auto room=raw.size()-reduction.text.size(),suffix=reduction_suffix(reduction.mode,std::string(32,'0')).size();
+  if(suffix>=room || extra_bytes>=room-suffix) return false;
+  return room-suffix-extra_bytes>=std::max<size_t>(512,raw.size()/5);
 }
 std::string display(const std::string& raw, const Reduction& reduction, Store& store, const json& metadata, bool track) {
   if (reduction.mode == "passthrough") {
     if (track) store.record("", raw.size(), raw.size(), reduction.mode);
     return raw;
   }
-  const bool lossless=reduction.mode=="exact-line-fold" || reduction.mode=="exact-block-fold" || reduction.mode=="exact-affix-block-fold" || reduction.mode=="json-whitespace-only";
-  const std::string guidance=lossless?"; lossless=true; all source content represented; original retrieval optional":"; fetch/search for complete original";
-  auto suffix="\n[LessToken " + reduction.mode + "; ref=" + std::string(32,'0') + guidance + "]\n";
-  auto visible=reduction.text.size()+suffix.size();
   // Include reference overhead. Marginal reductions are not worth losing context.
-  if (visible >= raw.size() || raw.size()-visible < std::max<size_t>(512,raw.size()/5)) {
+  if (!worthwhile_display(raw,reduction)) {
     if (track) store.record("", raw.size(), raw.size(), "low-gain-passthrough");
     return raw;
   }
   // Save before emitting a lossy view. Save failure propagates to the caller's raw fallback.
   auto ref = store.save(raw, metadata);
-  auto result = reduction.text + "\n[LessToken " + reduction.mode + "; ref=" + ref + guidance + "]\n";
+  auto result = reduction.text + reduction_suffix(reduction.mode,ref);
   if (track) store.record(ref, raw.size(), result.size(), reduction.mode);
   return result;
 }
@@ -319,7 +213,7 @@ json doctor() {
   return {{"name", "LessToken"}, {"version", version}, {"executable", path_text(executable_path())},
     {"data_directory", path_text(data_root())}, {"local_only", true}, {"api_key_required", false},
     {"mcp_transport", "stdio"}, {"host_verification", "Requires installation and hook approval in the target Codex host."},
-    {"hook_scope", "Explicit small-file prompt snapshots; PowerShell literal log/JSON and git reads; supported test/build argv in bypassPermissions mode. No post-output hook. Unsupported/nested calls pass through."},
+    {"hook_scope", "Explicit small-file prompt snapshots; adaptive PowerShell literal log/JSON reads; supported test/build argv in bypassPermissions mode. Brief or unhelpful known reads pass through. No post-output hook. Unsupported/nested calls pass through."},
     {"measurement", "Actual bytes only. No billed-token or subscription savings claim."}};
 }
 }

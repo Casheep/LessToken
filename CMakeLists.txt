@@ -3,7 +3,20 @@ file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" LESSTOKEN_BUILD_VERSION LIMIT
 project(LessToken VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-add_executable(lesstoken src/main.cpp src/core.cpp src/storage.cpp src/process.cpp src/mcp.cpp src/hook.cpp src/prompt.cpp src/context.cpp src/query.cpp src/records.cpp src/batch.cpp)
+add_executable(lesstoken
+  src/main.cpp
+  src/core.cpp
+  src/reduction.cpp
+  src/storage.cpp
+  src/process.cpp
+  src/mcp.cpp
+  src/hook.cpp
+  src/prompt.cpp
+  src/context.cpp
+  src/query.cpp
+  src/records.cpp
+  src/batch.cpp
+)
 target_include_directories(lesstoken PRIVATE include third_party)
 target_compile_definitions(lesstoken PRIVATE LESSTOKEN_VERSION="${LESSTOKEN_BUILD_VERSION}")
 if(WIN32)

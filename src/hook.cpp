@@ -1,6 +1,5 @@
 #include "lesstoken.hpp"
 #include <cstdlib>
-#include <sstream>
 #include <set>
 #include <fstream>
 #include <algorithm>
@@ -98,11 +97,22 @@ json hook(const json& event, bool explicit_opt_in) {
           auto path = confined(project, confined(project, from_utf8(base)) / from_utf8(operand));
           auto ext = lower(path_text(path.extension()));
           if (fs::is_regular_file(path) && (ext == ".log" || ext == ".out" || ext == ".json" || ext == ".txt")) {
+            const auto size=fs::file_size(path);
+            if(size<4096) return json::object();
             std::ifstream f(path, std::ios::binary); char prefix[4]{}; f.read(prefix, 4);
             bool binary = std::find(prefix, prefix + f.gcount(), '\0') != prefix + f.gcount();
+            if(f.gcount()>=2 && ((static_cast<unsigned char>(prefix[0])==0xff && static_cast<unsigned char>(prefix[1])==0xfe) ||
+              (static_cast<unsigned char>(prefix[0])==0xfe && static_cast<unsigned char>(prefix[1])==0xff))) binary=true;
             if (!binary) {
               auto ps_quote = [](std::string s) { std::string r = "'"; for (char c : s) r += c == '\'' ? "''" : std::string(1,c); return r + "'"; };
               auto replacement = "& " + ps_quote(path_text(executable_path())) + " reduce --kind " + (ext == ".json" ? "json" : "log") + " --file " + ps_quote(path_text(path));
+              // For bounded known inputs, include the added command text and
+              // reference notice in the gain check. Never pre-run build/tests.
+              if(size<=65536) {
+                auto raw=read_file(path,65536);
+                const auto extra=replacement.size()>command.size()?replacement.size()-command.size():0;
+                if(!worthwhile_display(raw,reduce(raw,ext==".json"?"json":"log"),extra)) return json::object();
+              }
               input[input.contains("command") ? "command" : "cmd"] = replacement;
               return {{"hookSpecificOutput", {{"hookEventName", "PreToolUse"}, {"permissionDecision", "allow"}, {"permissionDecisionReason", "LessToken literal project text read"}, {"updatedInput", input}}}};
             }
@@ -111,38 +121,8 @@ json hook(const json& event, bool explicit_opt_in) {
       }
     }
   }
-  if (command.size() > 512 || command.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -") != std::string::npos) return json::object();
-  std::istringstream s(command); std::vector<std::string> words;
-  for (std::string word; s >> word;) words.push_back(word);
-  if (words.size() < 2 || words[0] != "git") return json::object();
-  if (words[1] == "status") {
-    if (words.size() != 2) return json::object();
-  } else if (words[1] == "log") {
-    if (words.size() == 3 && words[2] != "--oneline") return json::object();
-    if (words.size() > 3) return json::object();
-  } else return json::object();
-  // updatedInput requires protocol-level allow in current Codex. Restrict this
-  // opt-in rewrite to known permission modes and narrow inspection commands.
-  // No write, test/build, path operand, machine format, redirection or pipeline qualifies.
-  std::string rewritten;
-#ifdef _WIN32
-  if (input.contains("shell")) {
-    auto sh = lower(input["shell"].get<std::string>());
-    if (sh.find("powershell") == std::string::npos && sh.find("pwsh") == std::string::npos) return json::object();
-  }
-  auto exe = path_text(executable_path());
-  std::string ps = "'";
-  for (char c : exe) ps += c == '\'' ? "''" : std::string(1, c);
-  ps += "'";
-  rewritten = "& " + ps + " run --kind log --";
-#else
-  rewritten = quote_arg(executable_path().string()) + " run --kind log --";
-#endif
-  for (const auto& w : words) rewritten += " " + w;
-  // Preserve original execution-context fields. Refuse rather than erase policy fields.
-  auto key = input.contains("command") ? "command" : "cmd";
-  input[key] = rewritten;
-  return {{"hookSpecificOutput", {{"hookEventName", "PreToolUse"}, {"permissionDecision", "allow"},
-    {"permissionDecisionReason", "LessToken opt-in bounded read-only git wrapper"}, {"updatedInput", input}}}};
+  // Git status/log have no useful reduction here. Wrapping their already short
+  // output only adds command/history overhead.
+  return json::object();
 }
 }
