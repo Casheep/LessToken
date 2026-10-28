@@ -12,6 +12,7 @@ add_executable(lesstoken
   src/mcp.cpp
   src/hook.cpp
   src/prompt.cpp
+  src/delta.cpp
   src/context.cpp
   src/query.cpp
   src/records.cpp

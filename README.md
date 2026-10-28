@@ -2,7 +2,7 @@
 
 为 Codex 减少重复输出和不必要的工具往返的本地插件，在尽量不降低模型能力和回答质量的前提下减少 token 消耗。核心使用 C++20，支持 Windows x64 的 Codex 桌面端和 CLI。
 
-当前版本：**0.2.0-beta.13**。
+当前版本：**0.2.0-beta.14**。
 
 ## 能做什么
 
@@ -12,6 +12,7 @@
 - 按需读取、搜索和分页查询大文件。
 - 对明确点名的小文件检查，提前在本地准备完整证据，减少模型取文件的往返。
 - 自动复用已核对且仍在上下文中的相同文件内容，避免重复附加。
+- 对同一源码的多处局部修改提供精确差异，收益不足或历史原文不可用时完整读取。
 
 已完成的真实模型对照中，总 token（输入与输出）用量变化如下：
 
@@ -23,6 +24,7 @@
 - 安全分页读取：减少 **66.1%**。
 - 长聊天中的文件复用：减少 **36.3%**。
 - 长聊天中的源码更新：减少 **47.6%**。
+- 长聊天中的多处源码更新：减少 **43.3%**。
 - 单次历史压缩：减少 **47.5%**。
 
 前六项以关闭插件为对照；文件复用、源码更新和历史压缩分别比较各自优化前后。各项独立统计，对应测试的优化组正确性检查均通过。
@@ -33,7 +35,7 @@
 
 ### 普通命令行
 
-下载 [Windows x64 安装包](https://github.com/Casheep/LessToken/releases/download/v0.2.0-beta.13/LessToken-0.2.0-beta.13-windows-x64.zip)，解压到一个长期保留的目录，在该目录打开 PowerShell：
+下载 [Windows x64 安装包](https://github.com/Casheep/LessToken/releases/download/v0.2.0-beta.14/LessToken-0.2.0-beta.14-windows-x64.zip)，解压到一个长期保留的目录，在该目录打开 PowerShell：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1

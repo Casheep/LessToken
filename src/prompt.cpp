@@ -61,28 +61,6 @@ bool snapshot_in_active_tail(const json& event,const json& snapshot,const std::s
     return found;
   } catch(...) {prior_ref.clear();previous=json::object();return false;}
 }
-std::string source_delta(const std::string& path,const std::string& before,const std::string& after) {
-  auto split=[](const std::string& text) {
-    std::vector<std::string> rows;size_t at=0;
-    while(at<text.size()) {auto end=text.find('\n',at);auto next=end==std::string::npos?text.size():end+1;rows.push_back(text.substr(at,next-at));at=next;}
-    return rows;
-  };
-  const auto old=split(before),now=split(after);size_t prefix=0,suffix=0;
-  while(prefix<std::min(old.size(),now.size()) && old[prefix]==now[prefix]) ++prefix;
-  while(suffix<std::min(old.size(),now.size())-prefix && old[old.size()-suffix-1]==now[now.size()-suffix-1]) ++suffix;
-  if(prefix==old.size() && prefix==now.size()) return {};
-  const auto begin=prefix?prefix-1:0,context=std::min<size_t>(1,suffix);
-  const auto old_end=old.size()-suffix,new_end=now.size()-suffix;
-  const auto old_count=old_end+context-begin,new_count=new_end+context-begin;
-  std::string out="--- a/"+path+"\n+++ b/"+path+"\n@@ -"+std::to_string(begin+(old_count?1:0))+","+std::to_string(old_count)+
-    " +"+std::to_string(begin+(new_count?1:0))+","+std::to_string(new_count)+" @@\n";
-  auto row=[&](char tag,const std::string& text) {out+=tag;out+=text;if(text.empty() || text.back()!='\n') out+="\n\\ No newline at end of file\n";};
-  for(size_t i=begin;i<prefix;++i) row(' ',old[i]);
-  for(size_t i=prefix;i<old_end;++i) row('-',old[i]);
-  for(size_t i=prefix;i<new_end;++i) row('+',now[i]);
-  for(size_t i=0;i<context;++i) row(' ',old[old_end+i]);
-  return out;
-}
 bool refresh_snapshot_ref(const Store& store,const std::string& ref,const std::string& raw) {
 #ifdef _WIN32
   if(ref.size()!=32 || !std::all_of(ref.begin(),ref.end(),[](char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');})) return false;

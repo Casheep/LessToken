@@ -2,6 +2,8 @@
 #include "native.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <limits>
 
 namespace lt {
 ToolError::ToolError(const std::string& code,const std::string& message,const std::string& phase,const std::string& effect):std::runtime_error(message),
@@ -80,14 +82,57 @@ json load_record(const fs::path& root,const std::string& ref) {
   if(result.value("ref",std::string())!=ref) throw ToolError("POLICY_DENIED","Record identity mismatch");
   return result;
 }
+// Do not round a large integer to double or wrap a negative integer to unsigned
+// when matching JSON filters. Object member order is not part of its value.
+static bool same_value(const json& a,const json& b) {
+  if(a.is_number() && b.is_number()) {
+    if(a.is_number_float() && b.is_number_float()) return a.get<double>()==b.get<double>();
+    if(a.is_number_float() || b.is_number_float()) {
+      const auto& integer=a.is_number_float()?b:a;
+      const auto real=(a.is_number_float()?a:b).get<double>();
+      if(!std::isfinite(real) || std::trunc(real)!=real) return false;
+      if(integer.is_number_unsigned())
+        return real>=0 && real<std::ldexp(1.0,64) && integer.get<uint64_t>()==static_cast<uint64_t>(real);
+      return real>=-std::ldexp(1.0,63) && real<std::ldexp(1.0,63) && integer.get<int64_t>()==static_cast<int64_t>(real);
+    }
+    if(a.is_number_unsigned() && b.is_number_unsigned()) return a.get<uint64_t>()==b.get<uint64_t>();
+    if(!a.is_number_unsigned() && !b.is_number_unsigned()) return a.get<int64_t>()==b.get<int64_t>();
+    const auto signed_value=(a.is_number_unsigned()?b:a).get<int64_t>();
+    const auto unsigned_value=(a.is_number_unsigned()?a:b).get<uint64_t>();
+    return signed_value>=0 && static_cast<uint64_t>(signed_value)==unsigned_value;
+  }
+  if(a.type()!=b.type()) return false;
+  if(a.is_object()) {
+    if(a.size()!=b.size()) return false;
+    for(auto it=a.begin();it!=a.end();++it) {
+      auto other=b.find(it.key());if(other==b.end() || !same_value(it.value(),*other)) return false;
+    }
+    return true;
+  }
+  if(a.is_array()) {
+    if(a.size()!=b.size()) return false;
+    for(size_t i=0;i<a.size();++i) if(!same_value(a[i],b[i])) return false;
+    return true;
+  }
+  return a==b;
+}
 json record_page(const json& rows,const json& args,size_t reserved_bytes) {
   if(!rows.is_array()) throw ToolError("INVALID_ARGUMENT","Rows must be an array");
-  auto offset=args.value("offset",0LL), budget=args.value("max_bytes",12000LL);
+  auto integer=[&](const char* key,size_t fallback,size_t minimum,size_t maximum) {
+    if(!args.contains(key)) return fallback;
+    const auto& value=args.at(key);uint64_t parsed;
+    if(value.is_number_unsigned()) parsed=value.get<uint64_t>();
+    else if(value.is_number_integer() && value.get<int64_t>()>=0) parsed=static_cast<uint64_t>(value.get<int64_t>());
+    else throw ToolError("INVALID_ARGUMENT",std::string(key)+": expected a nonnegative integer");
+    if(parsed<minimum || parsed>maximum) throw ToolError("INVALID_ARGUMENT",std::string(key)+": out of range");
+    return static_cast<size_t>(parsed);
+  };
+  const auto offset=integer("offset",0,0,std::numeric_limits<size_t>::max());
+  const auto budget=integer("max_bytes",12000,512,16000);
   auto requested_limit=args.value("limit",json(100));
   if((!requested_limit.is_number_integer() && !requested_limit.is_number_unsigned()) || requested_limit<1)
     throw ToolError("INVALID_ARGUMENT","limit: positive integer; pages cap at 512 rows");
   auto limit=requested_limit>512?512:requested_limit.get<long long>();
-  if(offset<0 || budget<512 || budget>16000) throw ToolError("INVALID_ARGUMENT","offset >=0, max_bytes 512..16000");
   auto where=args.value("equals",json::object()),fields=args.value("fields",json::array());
   if(!where.is_object() || where.size()>32 || !fields.is_array() || fields.size()>32) throw ToolError("INVALID_ARGUMENT","equals/fields: at most 32 top-level keys");
   for(const auto& key:fields) if(!key.is_string()) throw ToolError("INVALID_ARGUMENT","fields entries must be strings");
@@ -96,7 +141,7 @@ json record_page(const json& rows,const json& args,size_t reserved_bytes) {
     const auto& row=rows[index];
     if(!row.is_object()) throw ToolError("INVALID_ARGUMENT","Rows must contain objects");
     bool hit=true;
-    for(auto it=where.begin();it!=where.end();++it) if(!row.contains(it.key()) || row[it.key()]!=it.value()) {hit=false;break;}
+    for(auto it=where.begin();it!=where.end();++it) if(!row.contains(it.key()) || !same_value(row[it.key()],it.value())) {hit=false;break;}
     if(hit) filtered.push_back(index);
   }
   json out={{"items",json::array()},{"total",filtered.size()},{"next_offset",offset},{"complete",false},{"offset_semantics","Offset is in the filtered row sequence; keep equals/fields unchanged while paging."}};

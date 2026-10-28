@@ -144,7 +144,11 @@ json project_query(const fs::path& root, const json& args) {
   bool scan_complete=walk_complete, result_complete=true;
   const size_t budget=single?512u*1024*1024:16u*1024*1024;
   auto add=[&](const json& item) {
-    if((mode=="content"?content_hits:items.size())<static_cast<size_t>(limit) && items.dump(-1,' ',false,json::error_handler_t::replace).size()+item.dump(-1,' ',false,json::error_handler_t::replace).size()<15500) {items.push_back(item);if(mode=="content") ++content_hits;}
+    // Content windows are bounded by 100 hits and 12 KiB per window. Apply the
+    // final response byte budget AFTER merging their overlapping source lines;
+    // budgeting duplicate windows here can hide hits that would all fit merged.
+    if((mode=="content"?content_hits:items.size())<static_cast<size_t>(limit) &&
+      (mode=="content" || items.dump(-1,' ',false,json::error_handler_t::replace).size()+item.dump(-1,' ',false,json::error_handler_t::replace).size()<15500)) {items.push_back(item);if(mode=="content") ++content_hits;}
     else result_complete=false;
   };
   for(const auto& path:files) {
