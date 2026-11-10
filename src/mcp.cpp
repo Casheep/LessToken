@@ -39,13 +39,14 @@ static json tools(bool allow_write) {
     {{"name", "lt_search"}, {"description", "Literal project search: query or queries[1..8]. Multiple queries share original source windows and report independent counts. Set before/after (0..40); overlaps merge. Prefer mode=files/count/summary when text is unnecessary. line/lines identify hits; limit counts hits, not groups. glob supports include/!exclude. Check complete/scan_complete and clipped."},
       {"inputSchema", search_schema},
       {"annotations", {{"readOnlyHint", true}, {"openWorldHint", false}}}},
-    {{"name", "lt_result"}, {"description", "Raw refs: query, start/count or byte offset/bytes. Tables: put exactly one of path (project JSON-array file), items or source_ref; include equals/fields to receive the selected page immediately. Prefer path over read then put when the file and filters are known. Page refs with unchanged equals/fields; offsets follow filtered rows. release deletes tables only. j- refs page batch audits. Tables expire in 24h and are project-scoped."},
+    {{"name", "lt_result"}, {"description", "Raw refs: query, start/count or byte offset/bytes. Tables: put exactly one of path (project JSON-array file), items or source_ref; include equals/fields to receive the selected page immediately. Prefer path over read then put when the file and filters are known. Page refs with unchanged equals/fields; offsets follow filtered rows. format=auto may return columns+rows for large uniform scalar tables; otherwise items. release deletes tables only. j- refs page batch audits. Tables expire in 24h and are project-scoped."},
       {"inputSchema", schema({{"ref", text}, {"query", text}, {"start", integer(1, 10000000)}, {"count", integer(100, 500)},
         {"offset", {{"type", "integer"}, {"minimum", 0}}}, {"bytes", integer(12000, 16000)},
         {"action",{{"type","string"},{"enum",{"put","page","release"}}}},
         {"items",{{"type","array"},{"items",{{"type","object"}}},{"maxItems",10000}}},{"source_ref",text},{"path",text},
         {"equals",{{"type","object"}}},{"fields",{{"type","array"},{"items",text},{"maxItems",32}}},
-        {"limit",preview_integer(100,512)},{"max_bytes",{{"type","integer"},{"minimum",512},{"maximum",16000}}}})},
+        {"limit",preview_integer(100,512)},{"max_bytes",{{"type","integer"},{"minimum",512},{"maximum",16000}}},
+        {"format",{{"type","string"},{"enum",{"objects","auto"}},{"default","objects"}}}})},
       {"annotations", {{"readOnlyHint", false}, {"destructiveHint",false},{"openWorldHint", false}}}},
     {{"name","lt_batch"},{"description","Regular-file copy/move/remove only, project-relative / paths. plan requires 1..128 independent operations; resume executes that exact ref, never redoing completed/failed/unknown items. No overwrites, directories, links, or Git metadata. run/resume require server --allow-write. Page item states via lt_result. Use only for user-authorized file changes."},
       {"inputSchema",schema({{"action",{{"type","string"},{"enum",{"plan","run","resume"}}}},{"ref",text},
@@ -174,6 +175,7 @@ std::string mcp_call(const std::string& name, const json& args, const fs::path& 
     if(args.contains("action") || args.value("ref",std::string()).starts_with("t-") || args.value("ref",std::string()).starts_with("j-")) {
       auto out=table_tool(root,store,args).dump();store.record("",0,out.size(),"structured-result-response");return out;
     }
+    if(args.contains("format")) throw ToolError("INVALID_ARGUMENT","format requires a structured table reference or put action");
     auto ref = args.at("ref").get<std::string>();
     std::string out;
     if (args.contains("query")) out = store.search(ref, args.at("query").get<std::string>()).dump();

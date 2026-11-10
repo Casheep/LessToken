@@ -118,6 +118,9 @@ static bool same_value(const json& a,const json& b) {
 }
 json record_page(const json& rows,const json& args,size_t reserved_bytes) {
   if(!rows.is_array()) throw ToolError("INVALID_ARGUMENT","Rows must be an array");
+  if(args.contains("format") && !args.at("format").is_string()) throw ToolError("INVALID_ARGUMENT","format: objects or auto");
+  auto format=args.value("format",std::string("objects"));
+  if(format!="objects" && format!="auto") throw ToolError("INVALID_ARGUMENT","format: objects or auto");
   auto integer=[&](const char* key,size_t fallback,size_t minimum,size_t maximum) {
     if(!args.contains(key)) return fallback;
     const auto& value=args.at(key);uint64_t parsed;
@@ -147,6 +150,9 @@ json record_page(const json& rows,const json& args,size_t reserved_bytes) {
   json out={{"items",json::array()},{"total",filtered.size()},{"next_offset",offset},{"complete",false},{"offset_semantics","Offset is in the filtered row sequence; keep equals/fields unchanged while paging."}};
   if(requested_limit>512) out["limit_capped_from"]=requested_limit;
   auto serialized=out.dump().size()+reserved_bytes;
+  json columns=json::array(),compact_rows=json::array();
+  bool compact_possible=format=="auto",use_compact=false;
+  size_t compact_serialized=0;
   for(size_t i=static_cast<size_t>(offset);i<filtered.size() && out["items"].size()<static_cast<size_t>(limit);++i) {
     const auto& row=rows[filtered[i]];
     json item;
@@ -156,14 +162,43 @@ json record_page(const json& rows,const json& args,size_t reserved_bytes) {
     // rows again for every candidate row.
     const auto next=serialized+item.dump().size()+(out["items"].empty()?0:1)
       +std::to_string(i+1).size()-std::to_string(out["next_offset"].get<size_t>()).size();
-    if(next>static_cast<size_t>(budget)) {
+    // Standard JSON throughout: each compact row has one scalar per column.
+    // Missing keys, different key order and nested values keep object output.
+    auto eligible=compact_possible && item.size()>=2 && item.size()<=32;
+    json values=json::array();
+    if(eligible) {
+      if(columns.empty()) {
+        for(auto it=item.begin();it!=item.end();++it) columns.push_back(it.key());
+        auto header=out;header.erase("items");header["format"]="columns";
+        header["columns"]=columns;header["rows"]=json::array();
+        compact_serialized=header.dump().size()+reserved_bytes;
+      }
+      size_t column=0;
+      for(auto it=item.begin();it!=item.end();++it,++column) {
+        if(column>=columns.size() || columns[column]!=it.key() ||
+          !(it->is_null() || it->is_boolean() || it->is_string() || it->is_number())) {eligible=false;break;}
+        values.push_back(it.value());
+      }
+      if(values.size()!=columns.size()) eligible=false;
+    }
+    auto compact_next=eligible?compact_serialized+values.dump().size()+(compact_rows.empty()?0:1)
+      +std::to_string(i+1).size()-std::to_string(out["next_offset"].get<size_t>()).size():0;
+    auto prefer_compact=eligible && out["items"].size()+1>=8 && compact_next<next &&
+      next-compact_next>=512 && next-compact_next>=next/5+(next%5!=0);
+    if(!(prefer_compact && compact_next<=budget) && next>budget) {
       out["next_offset"]=i;
       if(out["items"].empty()) throw ToolError("OUTPUT_LIMIT","One row exceeds max_bytes; select fewer fields or raise the byte budget");
       break;
     }
+    compact_possible=eligible;use_compact=prefer_compact && compact_next<=budget;
+    if(eligible) {compact_rows.push_back(std::move(values));compact_serialized=compact_next;}
     out["items"].push_back(std::move(item));out["next_offset"]=i+1;serialized=next;
   }
-  out["complete"]=out["next_offset"].get<size_t>()>=filtered.size();return out;
+  out["complete"]=out["next_offset"].get<size_t>()>=filtered.size();
+  if(use_compact) {
+    out.erase("items");out["format"]="columns";out["columns"]=std::move(columns);out["rows"]=std::move(compact_rows);
+  }
+  return out;
 }
 json table_tool(const fs::path& root,Store& store,const json& args) {
   auto action=args.value("action",std::string("page"));
@@ -183,13 +218,14 @@ json table_tool(const fs::path& root,Store& store,const json& args) {
     if(rows.dump().size()>8*1024*1024) throw ToolError("OUTPUT_LIMIT","Structured data exceeds 8 MiB");
     auto ref="t-"+random_id();auto expires=now_seconds()+86400;
     json initial;
-    bool select_now=args.contains("equals") || args.contains("fields") || args.contains("limit") || args.contains("offset") || args.contains("max_bytes");
+    bool select_now=args.contains("equals") || args.contains("fields") || args.contains("limit") || args.contains("offset") || args.contains("max_bytes") || args.contains("format");
     if(select_now) initial=record_page(rows,args,ref.size()+9+std::string(",\"expires\":").size()+std::to_string(expires).size());
     save_record(root,ref,{{"version",1},{"root",path_text(fs::canonical(root))},{"root_identity",root_identity(root)},{"ref",ref},{"expires",expires},{"items",rows}});
     if(select_now) {initial["ref"]=ref;initial["expires"]=expires;return initial;}
     return {{"ref",ref},{"total",rows.size()},{"expires",expires},{"next_action","page with equals/fields; offsets are in filtered rows"}};
   }
   if(action!="page" && action!="release") throw ToolError("INVALID_ARGUMENT","Structured action: put, page or release");
+  if(action=="release" && args.contains("format")) throw ToolError("INVALID_ARGUMENT","format requires put or page");
   if(args.contains("items") || args.contains("source_ref") || args.contains("path")) throw ToolError("INVALID_ARGUMENT","page/release cannot replace rows");
   auto ref=args.at("ref").get<std::string>();auto record=load_record(root,ref);
   if(action=="release") {
